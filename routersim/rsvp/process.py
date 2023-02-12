@@ -9,7 +9,7 @@ import random
 import pprint
 import functools
 import sys
-from ipaddress import IPv4Address, ip_address, ip_interface, ip_network
+from ipaddress import IPv4Address, ip_network
 
 # https://www.juniper.net/documentation/en_US/release-independent/nce/topics/example/mpls-lsp-link-protect-solutions.html
 # https://www.juniper.net/documentation/en_US/release-independent/nce/topics/concept/mpls-lsp-node-link-protect-overview-solutions.html

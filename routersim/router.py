@@ -5,13 +5,14 @@ from .isis.process import IsisProcess
 from .routing import RoutingTables, Route, RouteType
 from .observers import EventManager, EventType, LoggingObserver, Event
 from .observers import GlobalQueueManager
-from .interface import PhysicalInterface
-from .messaging import FrameType, IPPacket, IPProtocol, ICMPMessage, ICMPType, Frame, RSVPMessage
+from .messaging import FrameType, IPPacket, IPProtocol, ICMPMessage, ICMPType, Frame, MACAddress, RSVPMessage
+from .messaging import BROADCAST_MAC
 from .forwarding import PacketForwardingEngine, ForwardingTable
-from .interface import ConnectionState
+from .interface import ConnectionState, LogicalInterface
+from .netdevice import NetworkDevice
+from .arp import ArpHandler, ArpPacket
 import ipaddress
 import logging
-import random
 from functools import partial
 from copy import copy
 
@@ -98,17 +99,29 @@ class PacketListener:
         # (control plane traffic)
         # Still need to work out exactly how we distinguish these
 
-        self.router.pfe.process_frame(frame, source_interface=evt.source)
+        # assume it was meant for the first interfrace for now,
+        # e.g. no vlan support
+        logint = None
+        for ifacename in evt.source.interfaces:
+            logint = evt.source.interfaces[ifacename]
+            #self.interfaces[ifacename].receive(frame)
+            break
+
+        # Treat this as exception traffic
+        # In "real life" the PFE would actuall see it first, so we're
+        # currently treating this listener as part of the PFE
+        if frame.dest == BROADCAST_MAC or frame.dest == logint.hw_address:
+            self.router.process_frame(frame, logint)
+        else:
+            self.router.pfe.process_frame(frame, source_interface=logint)
 
 
-class Router:
+class Router(NetworkDevice):
 
     def __init__(self, hostname, loopback_address):
-        self.hostname = hostname
-        self.logger = logging.getLogger(hostname)
-        self.phy_interfaces = dict()
-        self.interfaces = dict()
+        super().__init__(hostname)
         self.loopback_address = loopback_address
+        self.arp = ArpHandler(self, self.event_manager, self.logger)
         self.process = dict()
         self.event_manager = EventManager(self.hostname)
         self.routing = RoutingTables(evt_manager=self.event_manager, parent_logger=self.logger)
@@ -154,28 +167,6 @@ class Router:
     def __str__(self):
         return self.hostname
 
-    def add_physical_interface(self, interface_name):
-        is_loopback = False
-        if 'lo' in interface_name:
-            is_loopback = True
-
-        intf = PhysicalInterface(
-            interface_name, random.randbytes(6),
-            owner=self, is_loopback=is_loopback)
-        intf.event_manager = self.event_manager
-        self.phy_interfaces[interface_name] = intf
-        self.interfaces[interface_name] = intf
-
-        return self.phy_interfaces[interface_name]
-
-    def add_logical_interface(self, phy, interface_name, addresses=None):
-        intf = phy.add_logical_interface(interface_name, addresses)
-        self.interfaces[interface_name] = intf
-        return intf
-
-    def interface(self, interface_name):
-        return self.interfaces[interface_name]
-
     def enable_isis(self, interface, passive=False, metric=10):
         self.process['isis'].enable_interface(
             interface, passive=passive, metric=metric)
@@ -188,6 +179,18 @@ class Router:
 
     def show_isis_database(self):
         self.process['isis'].print_database()
+
+    def process_frame(self, frame: Frame, source_interface: LogicalInterface):
+        if frame.dest != BROADCAST_MAC and frame.dest != source_interface.hw_address:
+            return
+
+        if frame.type == FrameType.ARP:
+            self.arp.process(frame.pdu, source_interface)
+        elif frame.type == FrameType.IPV4:
+            self.process_packet(source_interface, frame.pdu)
+
+    def process_arp(self, source_interface, pdu):
+        self.arp.process(pdu, source_interface)
 
     def process_packet(self, source_interface, packet):
         self.logger.info(f"Received {packet.pdu}")
@@ -244,7 +247,20 @@ class Router:
             'static',
         )
 
+    # TODO: This will probably end up in NetworkDevice,
+    # or router will extend from Server
+    def send_frame(self,
+                   interface: LogicalInterface,
+                   dest_address: MACAddress,
+                   frame_type: FrameType,
+                   pdu,
+                   source_override: None):
 
+        # Assumption on this level is that we are over a shared medium
+        # such that we can just dump this on the wire. 
+        interface.send_frame(dest_address, frame_type, pdu)
+
+ 
     def send_ip(self, packet, source_interface=None):
 
         if source_interface is None:
@@ -261,87 +277,7 @@ class Router:
                        source_interface)
         )
 
-    def ping(self, ip_address, source_interface=None, source_ip=None, count=5, timeout=1000):
 
-        self.event_manager.stop_listening(EventType.ICMP, None)
-        self.pingid += 1
-        pingid = self.pingid+1
-
-        if isinstance(ip_address, str):
-            ip_address = ipaddress.ip_address(ip_address)
-
-        state = { 
-            'lost': None,
-            'remaining': count,
-            'lastsent': pingid,
-            'dest_ip': ip_address,
-            'source_interface': source_interface,
-            'source_ip': source_ip,
-        }
-
-        print(f"PING {ip_address}")
-
-        def ping_handler(evt):
-            if evt.object.pdu.type == ICMPType.EchoReply and evt.object.pdu.payload['id'] == state['lastsent']:
-                delta = GlobalQueueManager.now() - evt.object.pdu.payload['time']
-                print(f"\tReceived reply from {evt.object.source_ip} - {delta} ms")
-                state['lost'] = False
-            elif evt.object.pdu.type == ICMPType.DestinationUnreachable and evt.object.pdu.payload[2]['id'] == state['lastsent']:
-                print(f"\t{evt.object.pdu} from {evt.object.source_ip}")
-                state['lost'] = False
-
-        def check_and_send():
-            if state['lost']:
-                print(f"\t!! Lost after {timeout}ms")
-            if state['remaining'] > 0:
-                send_packet(state['dest_ip'], state['source_interface'], state['source_ip'])
-            else:
-                self.event_manager.stop_listening(EventType.ICMP, state['handler'])
-
-        def send_packet(ip_address, source_interface=None, source_ip=None):
-
-            if source_interface is None:
-                route = self.routing.lookup_ip(ip_address)
-                # TODO: If we can't find one we nneed to do "no route to host"
-                if route is not None:
-                    source_interface = route.interface
-                else:
-                    print(f"{self.hostname} {ip_address} - No route to host!") 
-                    return
-
-            if source_ip is None and source_interface is not None:
-                source_ip = source_interface.address().ip
-
-            if source_ip is None:
-                raise Exception(f"{self.hostname}: Unable to identify a source_ip to ping {ip_address} from {source_interface}")
-
-            self.pingid = pingid + 1
-            pingpayload = {
-                'id': self.pingid,
-                'time': GlobalQueueManager.now()
-            }
-            packet = IPPacket(
-                ip_address,
-                source_ip,
-                IPProtocol.ICMP,
-                ICMPMessage(ICMPType.EchoRequest, payload=pingpayload)
-            )
-            state['lastsent'] = pingpayload['id']
-            state['lost'] = True
-            state['remaining'] = state['remaining'] - 1
-            self.send_ip(packet, source_interface=source_interface)
-            GlobalQueueManager.enqueue(timeout, check_and_send)
-
-
-
-        state['handler'] = ping_handler
-        self.event_manager.listen(EventType.ICMP, state['handler'])
-        # Add a bit of "human delay" to also allow for any events
-        # that might need to occur before we ping, a la link state changes
-        GlobalQueueManager.enqueue(50, send_packet,
-            arguments=(ip_address, source_interface, source_ip)
-        )
-        # source_interface.send_ip(packet)
 
     def create_lsp(self, lsp_name, dest_ip, link_protection=False):
         """
