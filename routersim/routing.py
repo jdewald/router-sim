@@ -32,13 +32,14 @@ class ForwardAction(ForwardingAction):
 
 class ForwardingEntry:
 
-    def __init__(self, prefix, interface, action='FORWARD'):
+    def __init__(self, prefix, interface, action='FORWARD', next_hop_ip=None):
         self.prefix = prefix
         self.interface = interface
         self.action = action
+        self.next_hop_ip = next_hop_ip
 
     def __str__(self):
-        return f"{self.prefix} via {self.interface} ({self.action})"
+        return f"{self.prefix} via {self.interface}({self.next_hop_ip}) ({self.action})"
 
 
 class Route:
@@ -417,14 +418,17 @@ class RoutingTables:
                         
                     if recursive_route.interface.is_up():
                         ipfib[prefix] = ForwardingEntry(
-                            prefix, recursive_route.interface, recursive_route.action)
+                            prefix,
+                            recursive_route.interface, recursive_route.action,
+                            next_hop_ip=recursive_route.next_hop_ip
+                            )
                         applied_prefix = True
                     elif recursive_route.bypass is not None and recursive_route.bypass.interface.is_up():
                         ipfib[prefix] = ForwardingEntry(
                             prefix, recursive_route.bypass.interface,
                                 CombinedAction([recursive_route.action, recursive_route.bypass.action]))
                 else:
-                    ipfib[prefix] = ForwardingEntry(prefix, route.interface)
+                    ipfib[prefix] = ForwardingEntry(prefix, route.interface, next_hop_ip=route.next_hop_ip)
                     applied_prefix = True
 
                 # This route isn't hidden

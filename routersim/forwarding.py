@@ -1,4 +1,5 @@
 
+from routersim.interface import LogicalInterface
 from .messaging import FrameType
 from .messaging import IPPacket, IPProtocol, ICMPMessage, ICMPType, UnreachableType
 from .mpls import MPLSPacket, PopStackOperation
@@ -68,6 +69,7 @@ class PacketForwardingEngine():
     def __init__(self, forwarding_table: ForwardingTable, router):
         self.router = router
         self.forwarding = forwarding_table
+        self.arp_cache = router.arp.cache
         self.logger = router.logger.getChild("pfe")
 
     # Intended for internal communications
@@ -83,7 +85,7 @@ class PacketForwardingEngine():
 
     def process_frame(self, frame, source_interface=None, from_self=False, dest_interface=None):
 
-        def process_ip(pdu):
+        def process_ip(pdu, dest_interface=None):
             if pdu.inspectable() and not from_self:
                 self.router.process_packet(source_interface, pdu)
                 return
@@ -115,10 +117,14 @@ class PacketForwardingEngine():
                         # really the link between the RE and PFE is wonky
                         if dest_interface is None:
                             self.logger.debug(f"Using {potential_next_hops[0].interface} for {pdu}")
-                            potential_next_hops[0].interface.send_ip(pdu)
-                        else:
-                            self.logger.debug(f"Using {dest_interface} for {pdu}")
-                            dest_interface.send_ip(pdu)
+                            dest_interface = potential_next_hops[0].interface
+                        self.logger.debug(f"Using {dest_interface} for {pdu}")
+                        self.send_encapsulated(
+                            potential_next_hops[0].next_hop_ip,
+                            FrameType.IPV4,
+                            pdu,
+                            dest_interface
+                        )
                     elif hop_action.action == 'CONTROL':
                         if from_self:
                             self.logger.error(f"Unexpectedly have frame from self we need to forward {pdu}")
@@ -150,9 +156,15 @@ class PacketForwardingEngine():
 
         pdu = copy(frame.pdu)
         if frame.type == FrameType.IPV4:
-            process_ip(pdu)
+            process_ip(pdu, dest_interface)
             # This means we're supposed to look at it
         # special case of control plane...
+        elif frame.type == FrameType.ARP:
+            # So, dilemma: Here we PROBABLY want to make sure
+            # this only happens on switch interfaces?
+            # would is also happen on routed interfaces?
+            self.router.process_arp(source_interface, pdu)
+            # TODO: If we're switching, we also want to forward it!
         elif frame.type == FrameType.CLNS:
             self.router.process['isis'].process_pdu(source_interface, frame.pdu)
         elif frame.type == FrameType.MPLSU:
@@ -185,3 +197,24 @@ class PacketForwardingEngine():
                     print(f"Unknown de-encapsulated packet type!")
             else:
                 self.logger.error(f"**** No action found for label {pdu.label_stack[0]}")
+
+    def send_encapsulated(self,
+                          next_hop: ipaddress.IPv4Address,
+                          type: FrameType,
+                          packet,
+                          interface: LogicalInterface):
+        if next_hop is None:
+            dest_ip = packet.dest_ip
+            dest_ip_as_net = ipaddress.ip_network(f"{dest_ip}/32")
+            if interface.address().network.overlaps(dest_ip_as_net):
+                next_hop = dest_ip
+            else:
+                raise Exception("Valid IP is required")
+
+        hw_address = self.arp_cache[next_hop]
+        if hw_address is None:
+            # TODO: Drop it?
+            self.router.arp.request(next_hop, interface)
+        else:
+            interface.send(hw_address, type, packet)
+

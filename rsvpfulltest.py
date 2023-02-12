@@ -15,9 +15,11 @@ import logging
 
 logging.basicConfig()
 
+CDN_IP = "10.4.42.2"
+CDN_NETWORK = ipaddress.ip_interface(f"{CDN_IP}/24").network
 
 topology = Topology("My Topology!")
-topology.logger.setLevel("INFO")
+topology.logger.setLevel("WARN")
 
 outside = topology.add_router("outside", interfaces=['et1'], cluster_name="outside")
 
@@ -31,28 +33,36 @@ ayy = topology.add_router('ayy', interfaces=['et1', 'et2', 'et3'], cluster_name=
 fxx = topology.add_router('fxx', interfaces=['et1', 'et2', 'et3'], cluster_name="backbone")
 dxx = topology.add_router('dxx', interfaces=['et1', 'et2', 'et3'], cluster_name="backbone")
 oxx = topology.add_router('oxx', interfaces=['et1', 'et2', 'et3', 'et4'], cluster_name="backbone")
-gxx_mxx = topology.link_router_pair(gxx, mxx, te_metric=9210)
-gxx_jxx = topology.link_router_pair(gxx, jxx, te_metric=14530)
-mxx_axx = topology.link_router_pair(mxx, axx, te_metric=3025)
-mxx_dxx = topology.link_router_pair(mxx, dxx, te_metric=6017)
+axx_cdn = topology.add_router("cdn", interfaces=['et1', 'et2'], cluster_name="AS 65514")
 
-axx_ixx = topology.link_router_pair(axx, ixx, te_metric=3230)
-topology.link_router_pair(axx, dxx, te_metric=1839)
+# This will be our CDN IP
+axx_cdn.add_logical_interface(axx_cdn.interface('et2'), 'et2.0', addresses={'ip': f"{CDN_IP}/24"})
+axx_cdn.interface('et2').up()
 
-jxx_ixx = topology.link_router_pair(jxx, ixx, te_metric=412)
-topology.link_router_pair(lxx, ayy, te_metric=717)
-topology.link_router_pair(jxx, oxx, te_metric=1976)
+gxx_mxx = topology.link_router_pair(gxx, mxx, latency_ms=50, te_metric=9210)
+gxx_jxx = topology.link_router_pair(gxx, jxx, latency_ms=60, te_metric=14530)
+mxx_axx = topology.link_router_pair(mxx, axx, latency_ms=9, te_metric=3025)
+mxx_dxx = topology.link_router_pair(mxx, dxx, latency_ms=15, te_metric=6017)
+
+axx_ixx = topology.link_router_pair(axx, ixx, latency_ms=9, te_metric=3230)
+topology.link_router_pair(axx, dxx, latency_ms=9, te_metric=1839)
+
+jxx_ixx = topology.link_router_pair(jxx, ixx, latency_ms=4, te_metric=412)
+topology.link_router_pair(lxx, ayy, latency_ms=3, te_metric=717)
+topology.link_router_pair(jxx, oxx, latency_ms=10, te_metric=1976)
 
 jxx_lxx = topology.link_router_pair(jxx, lxx, te_metric=10000)
-topology.link_router_pair(ixx, ayy, te_metric=10000)
-topology.link_router_pair(ixx, fxx, te_metric=10000)
+topology.link_router_pair(ixx, ayy, latency_ms=40, te_metric=10000)
+topology.link_router_pair(ixx, fxx, latency_ms=45, te_metric=10000)
 
-topology.link_router_pair(dxx, oxx, te_metric=5095)
-topology.link_router_pair(oxx, ixx, te_metric=3249)
+topology.link_router_pair(dxx, oxx, latency_ms=18, te_metric=5095)
+topology.link_router_pair(oxx, ixx, latency_ms=11, te_metric=3249)
 
-topology.link_router_pair(fxx, ayy, te_metric=780)
+topology.link_router_pair(fxx, ayy, latency_ms=6, te_metric=780)
 
 topology.link_router_pair(outside, gxx)
+
+topology.link_router_pair(axx, axx_cdn)
 
 topo_data = topology.get_topology()
 with open("full_topology.puml", "w") as f:
@@ -93,6 +103,9 @@ with open("topology_component.puml", "w") as f:
 
 outside.static_route("0.0.0.0/0", "et1.0")
 
+# our CDN doesn't have it's own outside internet
+ams_cdn.static_route("0.0.0.0/0", "et1.0")
+
 topology.isis_enable_all(cluster_name="backbone")
 topology.isis_start_all(cluster_name="backbone")
 
@@ -105,20 +118,45 @@ print("")
 
 gxx.show_isis_database()
 
-gxx.routing.add_route(
+# Announce IP externally
+axx.routing.add_route(
     BGPRoute(
-        ipaddress.ip_network("10.1.42.0/24"),
-        None,  # we don't necessarily know the iface
-        ipaddress.ip_address("10.10.10.10"),  # maybe?
-        ['I'],
-        ayy.interface('lo.0').address().ip,
+        CDN_NETWORK,
+        None,
+        None,
+        ['I', '65514'],
+        protocol_next_hop=axx_cdn.interface('et1.0').address().ip
     ),
     'bgp'
 )
 
+# Now assume it propagated via iBGP
+gxx.routing.add_route(
+    BGPRoute(
+        CDN_NETWORK,
+        None,  # we don't necessarily know the iface
+        ipaddress.ip_address("10.10.10.10"),  # maybe?
+        ['I', '65514'],
+        protocol_next_hop=ayy.interface('lo.0').address().ip,
+    ),
+    'bgp'
+)
+
+# AXX (really all the pops), need to know how to reach other "cdn" ips
+axx.routing.add_route(
+    (
+        outside.interface("et1.0").address().network,
+        None,
+        None,
+        ['I', '65514'],
+        protocol_next_hop=gxx.interface('lo.0').address().ip
+    ),
+    'bgp'
+)
 
 sequence = rsvp_sequence("Building LSP", topology.routers())
-gxx.create_lsp('GXX-TO-AYY', ayy.interface('lo.0').address().ip, link_protection=True)
+gxx.create_lsp('GXX-TO-AXX', axx.interface('lo.0').address().ip, link_protection=True)
+ams.create_lsp('AXX-TO-GXX', gxx.interface('lo.0').address().ip, link_protection=True)
 
 topology.rsvp_start_all(cluster_name="backbone")
 #for router in topology.routers(cluster_name="backbone"):
@@ -158,7 +196,11 @@ with open("mpls_routes.puml", "w") as f:
 
             # assumption is the RSVP routes are 
             # being used to hop onto MPLS
-            next_label = route.action.new_label
+            if not isinstance(route.action, str):
+                next_label = route.action.new_label
+            else:
+                continue
+                next_label = f"Action: {route.action}"
 
             link_src[str(next_label)] = router.hostname
             actor.add_mapping(str(prefix), route.lsp_name + "," + str(route.action))
@@ -185,7 +227,7 @@ with open("mpls_routes.puml", "w") as f:
 #gxx.pfe.forwarding.print_fib()
 #print("")
 
-outside.ping(ipaddress.ip_address("10.1.42.2"), count=1)
+outside.ping(CDN_IP, count=1)
 
 print("=== JXX Forwarding Table ===")
 jxx.pfe.forwarding.print_fib()
@@ -197,9 +239,10 @@ events = topology.run_another(2000)
 #jxx_ixx.down()
 #axx_ixx.down()
 
-outside.ping(ipaddress.ip_address("10.1.42.2"), count=1)
+outside.ping(CDN_IP, count=1)
 
-events.extend(topology.run_another(3000))
+
+pingevents = topology.run_another(2000)
 
 #print("=== GXX Routing Table ===")
 #gxx.routing.print_routes()
@@ -213,13 +256,18 @@ events.extend(topology.run_another(3000))
 #mxx.pfe.forwarding.print_fib()
 #print("")
 
-sequence = packet_sequence("Ping via MPLS", topology.routers())
 with open("rsvp_ping.puml", "w") as f:
-    for evt_data in events:
-        packet_sequence_add_event(
-            sequence,
-            evt_data[0],  # source router
-            evt_data[1]
-        )
+    sequence = packet_sequence("Ping via MPLS", topology.routers(), pingevents)
+    f.write(sequence.render_syntax())
+
+#gru_jfk.down()
+
+
+topology.schedule(1000, gru_jfk.down)
+topology.schedule(3000, mia_atl.down)
+outside.ping(CDN_IP, count=10)
+
+with open("rsvp_ping_down.puml", "w") as f:
+    sequence = packet_sequence("Ping via MPLS", topology.routers(), topology.run_another(10000))
 
     f.write(sequence.render_syntax())

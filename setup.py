@@ -5,6 +5,7 @@ setup(name='routersim',
         'routersim',
         'routersim.isis',
         'routersim.rsvp',
+        'routersim.ply',
         ],
       py_modules=[
         'plantuml',

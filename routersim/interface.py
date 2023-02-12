@@ -2,7 +2,7 @@ from enum import Enum
 import ipaddress
 import binascii
 from .observers import Event, EventType, GlobalQueueManager
-from .messaging import Frame, FrameType
+from .messaging import Frame, FrameType, MACAddress
 from copy import deepcopy
 
 
@@ -27,11 +27,16 @@ class PhysicalInterface:
         self.parent = owner
         self.is_loopback = is_loopback
 
+    @property
+    def hw_address(self):
+        return self.address
+
     def __str__(self):
-        return f"PHY/{self.name} ({binascii.hexlify(self.address)}) "
+        return f"PHY/{self.name} ({self.address}) "
 
     def is_up(self):
         return (
+            self.link is not None and
             self.state == ConnectionState.UP and
             self.admin_state == ConnectionState.UP
         )
@@ -68,12 +73,14 @@ class PhysicalInterface:
 
         return self.link
 
-    def send(self, frame_type, pdu, logical=None):
+    def _send(self, frame_type, pdu, logical=None):
         # no "arp" yet
-        frame = Frame(self.address, "Unknown", frame_type, pdu)
+        frame = Frame(self.hw_address, "Unknown", frame_type, pdu)
         self.send_frame(frame, logical=logical)
 
     def send_frame(self, frame, logical=None):
+        if not self.is_up():
+            return
         if self.link is not None:
             self.link.send(frame, sender=self, logical=logical)
         else:
@@ -82,11 +89,13 @@ class PhysicalInterface:
 
     def receive(self, frame):
         if self.is_up():
-            # assume it was meant for the first interfrace for now,
-            # e.g. no vlan support
-            for ifacename in self.interfaces:
-                self.interfaces[ifacename].receive(frame)
-                break
+            self.event_manager.observe(
+                Event(
+                    EventType.PACKET_RECV,
+                    self,
+                    f"Received {frame.pdu}",
+                    object=frame)
+            )
 
 
 class LogicalInterface:
@@ -107,6 +116,10 @@ class LogicalInterface:
             if 'iso' in addresses:
                 self.addresses['iso'] = addresses['iso']
 
+    @property
+    def hw_address(self):
+        return self.parent.hw_address
+
     def address(self, type='ipv4'):
         return self.addresses.get(type)
 
@@ -116,7 +129,18 @@ class LogicalInterface:
     def is_physical(self):
         return False
 
-    def send_ip(self, pdu):
+    def send_frame(self, frame: Frame):
+        self.parent.send_frame(frame, logical=self)
+
+    def send(self,
+             dest_address: MACAddress,
+             frame_type: FrameType,
+             pdu):
+
+        frame = Frame(self.hw_address, dest_address, frame_type, pdu)
+        self.send_frame(frame)
+
+    def _send_ip(self, pdu):
         self.phy.send(FrameType.IPV4, pdu, logical=self)
 
     def send_clns(self, pdu):
@@ -142,13 +166,14 @@ class LogicalInterface:
             Event(EventType.LINK_STATE, self, f"{self} is now DOWN"))
 
     def receive(self, frame):
-        self.event_manager.observe(
-            Event(
-                EventType.PACKET_RECV,
-                self,
-                f"Received {frame.pdu}",
-                object=frame)
-        )
+        pass
+#        self.event_manager.observe(
+#            Event(
+#                EventType.PACKET_RECV,
+#                self,
+#                f"Received {frame.pdu}",
+#                object=frame)
+#        )
 
 
 class PhysicalLink:

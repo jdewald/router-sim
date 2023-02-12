@@ -40,6 +40,8 @@ class EventType(Enum):
 
     ISIS = 10
     RSVP = 11
+    ARP = 12
+    BRIDGING = 13
 
     def __str__(self):
         return str(self.name)
