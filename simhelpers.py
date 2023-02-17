@@ -53,6 +53,29 @@ def isis_sequence(title, routers, events=None):
 
     return sequence
 
+def frame_sequence(title, routers, events=None,l3=True):
+    sequence = Sequence(title)
+
+    for router in routers:
+        sequence.actor(router.hostname, type='entity', group=router.hostname)
+        sequence.actor(f"{router.hostname}.pfe", type='entity', group=router.hostname)
+
+    start_time = 0
+    if events is not None:
+        for evt_data in events:
+            if start_time == 0:
+                start_time = evt_data[1].when
+            frame_sequence_add_event(
+                sequence,
+                evt_data[0],  # source router
+                evt_data[1],
+                start_time=start_time,
+                l3=l3,
+            )
+
+
+    return sequence
+
 
 def packet_sequence(title, routers, events=None):
 
@@ -149,6 +172,45 @@ def isis_sequence_add_event(sequence, src_name, evt, start_time=0):
             note=evt.object.seq_note()
         )
 
+def frame_sequence_add_event(sequence, src_name, evt, start_time=0,l3=True):
+    # TODO: I would like this to all be unified so
+    # there isn't a bunch of complex logic
+    # but need to develop the use caess first
+
+    # TODO: Dynamically discover group membership
+
+    if evt.event_type == EventType.PACKET_SEND:
+
+        if evt.object.type.name == 'CLNS':
+            return
+
+        notefn = getattr(evt.object.pdu, "seq_note", None)
+        if notefn is not None:
+            note = notefn()
+        else:
+            note = None
+
+        if evt.sub_type == "LOCAL_SEND":
+            hostname = f"{src_name}.pfe"
+            note = None
+        else:
+            src_name = f"{src_name}.pfe"
+            iface = evt.target
+            routeroriface = iface.parent    
+            hostname = getattr(routeroriface, "hostname", None)
+            if hostname is None:
+                hostname = routeroriface.parent.hostname
+
+        sequence.actor(src_name).send_message(
+            sequence.actor(f"{hostname}"),
+            f"[{evt.when-start_time}] {evt.object}",
+            note=note
+        )
+    elif evt.event_type == EventType.MPLS:
+        sequence.actor(f"{src_name}.pfe").send_message(
+           sequence.actor(f"{src_name}.pfe"),
+           f"[{evt.when-start_time}] {evt.msg}"
+        )
 
 def packet_sequence_add_event(sequence, src_name, evt, start_time=0):
     # TODO: I would like this to all be unified so

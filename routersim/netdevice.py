@@ -54,6 +54,24 @@ class NetworkDevice():
 
         return self.phy_interfaces[interface_name]
 
+    def add_ip_address(self, interface_name, address):
+        intf = self.interfaces.get(interface_name)
+        if intf is None:
+            raise f"{interface_name} is an unknown interface"
+
+        if type(address) == str:
+            address = { 'ip': address}
+
+        if intf.is_physical():
+            logf = self.interfaces.get(interface_name + ".0")
+            if logf is None:
+                logf = self.add_logical_interface(intf, interface_name + ".0", address)
+        else:
+            intf.addresses['ipv4'] = ipaddress.ip_interface(
+                    address['ip'])
+        
+        return self
+
     def add_logical_interface(self, phy, interface_name, addresses=None):
         intf = phy.add_logical_interface(interface_name, addresses)
         self.interfaces[interface_name] = intf

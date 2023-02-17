@@ -1,4 +1,6 @@
 from routersim.router import Router
+from routersim.switching.switch import Switch
+from routersim.server import Server
 from routersim.observers import GlobalQueueManager, EventCollector
 import ipaddress
 import logging
@@ -67,7 +69,7 @@ class Topology():
         return self.clock.time()
 
     # Return version of topology which can be used to be loaded later
-    def get_topology(self):
+    def get_topology(self,layer2=True):
         topo = {
             'clusters': [],
             'links': []
@@ -86,19 +88,43 @@ class Topology():
                 # connections are on physical, addressing is on logical
                 # but we'll combine them here.. ?
                 # May need to reconsider when loading
+                seen = {}
                 for ifacename in router.interfaces:
                     iface = router.interfaces[ifacename]
+                    physiface = None
                     if iface.is_physical():
-                        continue
+                        physiface = iface
+                        iface = physiface.logical()
+                    else:
+                        physiface = iface.parent
+
+
+                    addr = ""
+                    if iface is not None:
+                        if iface.name in seen:
+                            continue
+                        addr = iface.address()
+                        if addr is None:
+                            addr = ""
+                        seen[iface.name] = True
+               
                     
                     # Treat it as if the address is on the logical interface for now
-                    ifaceinfo = {'name': iface.parent.name, 'address': str(iface.address())}
-                    routerinfo['interfaces'].append(ifaceinfo)
+                    if physiface.link is not None and addr != "":
+                        ifaceinfo = {'name': iface.name, 'address': str(addr)}
+                        routerinfo['interfaces'].append(ifaceinfo)
 
-                    physiface = iface.parent
+                    if physiface.name in seen:
+                        continue
 
+                    if layer2 and (physiface.link is not None):
+                        ifaceinfo = {'name': physiface.name, 'address': str(physiface.hw_address)}
+                        routerinfo['interfaces'].append(ifaceinfo)
+                    
                     # So this is probably confusing here, but note that we are outputting
                     # the link as if it's on the logical
+                    if physiface.link is None or physiface.link.endpoint1 != physiface:
+                        continue
                     if (physiface.link is not None and
                        physiface.link.endpoint1 == physiface):
                         link = physiface.link
@@ -107,8 +133,49 @@ class Topology():
                             'endpoint2': {'system': link.endpoint2.parent.hostname, 'iface': link.endpoint2.name},
                         }
                         topo['links'].append(linkinfo)
+                        seen[physiface.name] = True
 
         return topo
+
+    def add_server(self, name: str,
+                    interfaces=None, cluster_name: str = 'default') -> Server:
+
+        if cluster_name not in self.clusters:
+            self.clusters[cluster_name] = {}
+
+        switch = Server(name)
+
+        if interfaces is not None:
+            for ifacename in interfaces:
+                switch.add_physical_interface(ifacename)
+
+        self.clusters[cluster_name][name] = switch
+
+        self.logger.info(f"Added Server {name}")
+        switch.event_manager.listen('*', self.collector.observer(name))
+    #    self._routers.append(switch)
+
+        return switch
+
+    def add_switch(self, name: str,
+                    interfaces=None, cluster_name: str = 'default') -> Switch:
+
+        if cluster_name not in self.clusters:
+            self.clusters[cluster_name] = {}
+
+        switch = Switch(name)
+
+        if interfaces is not None:
+            for ifacename in interfaces:
+                switch.add_physical_interface(ifacename)
+
+        self.clusters[cluster_name][name] = switch
+
+        self.logger.info(f"Added switch {name}")
+        switch.event_manager.listen('*', self.collector.observer(name))
+        self._routers.append(switch)
+
+        return switch
 
     def add_router(self, name: str,
                    interfaces=None, cluster_name: str = 'default') -> Router:
