@@ -15,7 +15,9 @@ def topology_diagram(title, topo_data, events=None):
     # This is kind of cheating... but still need best way to 
     # make the diagram
     for link in topo_data['links']:
-        diagram.send_message(link['endpoint1'], link['endpoint2'])
+        diagram.send_message(
+            link['endpoint1']['system'] + "::" + link['endpoint1']['iface'],
+            link['endpoint2']['system'] + "::" + link['endpoint2']['iface'])
 
     return diagram
 
