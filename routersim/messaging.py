@@ -1,7 +1,7 @@
 from enum import Enum
 
 
-BROADCAST_MAC = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
+
 class FrameType(Enum):
     # So, this is a total fudge. OSI CLNS packets
     # are actually encapsulated in Link Layer Control (LLC)
@@ -55,6 +55,8 @@ class MACAddress():
     def __str__(self):
         return self.bytes.hex(":", 1)
 
+BROADCAST_MAC = MACAddress(bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]))
+
 class Frame:
 
     def __init__(self,
@@ -65,6 +67,8 @@ class Frame:
         self.pdu = pdu
         self.type = type
 
+    def __str__(self):
+        return f"{self.src}->{self.dest} {self.type} ~ {self.pdu}"
 
 
 class IPPacket:

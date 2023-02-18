@@ -6,6 +6,7 @@ setup(name='routersim',
         'routersim.isis',
         'routersim.rsvp',
         'routersim.ply',
+        'routersim.switching',
         ],
       py_modules=[
         'plantuml',

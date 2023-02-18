@@ -49,6 +49,13 @@ class PhysicalInterface:
             name, self, addresses=addresses)
         self.interfaces[name].event_manager = self.event_manager
         return self.interfaces[name]
+    
+    # get first logical interface, if there is one
+    def logical(self):
+        if len(self.interfaces) > 0:
+            return list(self.interfaces.values())[0]
+        return None
+
 
     # Should only be called to indicate that both sides are up
     def up(self):

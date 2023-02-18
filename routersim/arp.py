@@ -66,9 +66,9 @@ class ArpPacket:
 
     def __str__(self):
         if self.arp_type == ArpType.Request:
-            return f"ARP Who-Is {self.target_address}"
+            return f"ARP Request Who-Is {self.target_address}, tell {self.source_address} at {self.hw_address}"
         else:
-            return f"ARP f{self.source_address} is {self.hw_address}"
+            return f"ARP Response {self.source_address} is {self.hw_address}"
 
 
 class ArpHandler:

@@ -28,9 +28,9 @@ def p_showethernet(p):
 
     p[0] = lambda device: device._bridging.bridging.print_bridging_table()
 
-def p_eterror(p):
-    '''eterror :'''
-    print("Specify table")
+#def p_eterror(p):
+#    '''eterror :'''
+#    print("Specify table")
 
 def p_error(p):
     if p:

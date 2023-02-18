@@ -3,7 +3,7 @@
 ## What the heck is this?
 
 This repository contains a toy implementation of router technologies intended for exploration and learning. 
-Specifically, it will implement various routing protocols (IS-IS, OSPF, BGP, static) as well as performing routing (forwarding) of packets based on teh derived tables.
+Specifically, it will implement various routing protocols (IS-IS, OSPF, BGP, static) as well as performing routing (forwarding) of packets based on the derived tables.
 
 In terms of router implementation the following is there:
 * Packet forwarding
@@ -35,26 +35,35 @@ At the time of this writing, there are no external dependencies on the Python si
 
 As a mechanism to provide an all-in-one and convenient method to run and view the simulation, this repository also contains a `Dockerfile` which will generate a container image which has Jupyter notebook, the routersim, and various binaries (such as `plantuml`). 
 
-You can see an example of what the [notebook can do here](samples/isis_demo/isis_demo.md).
+You can see an example of what the [notebook can do here](samples/demos/001_lan.ipynb).
 ### QuickStart
 
-A container has been pre-built and available to just download and run if you don't want to build locally
+This QuickStart assumes you have access to Docker
 
-Create a directory which will hold your notebooks. Note that this is the same base path you may be using for the existing data-eng Needle notebook
+After cloning:
 
-`mkdir -p $HOME/needle_notebooks/routersim`
+`docker build -f Dockerfile -t routersim:latest .`
 
-Grab the image
+Then to start it up and use the pre-built 'demos' directory without needing to re-upload:
 
-`docker pull jdewald/routersim-notebook:latest`
+`docker run -v $PWD/demos:/home/jovyan/work -p 8888:8888 routersim:latest`
 
-Run the image, mounting the directory to /notebooks/my_notebooks which the container is aware of. You can use any local port, but 8888 will be the container port
+You can also copy notebooks over wherever you might want and just mount that directory. 
+NOTE: that `/home/joyvan/work` should be left as-is, as it's from the base notebook and I didn't see a reason to change.
 
-`sudo docker run --rm -p 8888:8888 -v $HOME/needle_notebooks:/notebooks/my_notebooks routersim-notebook:latest`
+After it starts, it will give a token-based link which you can open in your browser.
 
-You will see a path in the output, you can visit that (e.g http://localhost:8888/?token=...)
+Eventually I'll push up a docker image you can use without needing to build. 
 
-Ideally you will see some notebooks in the `demos` folder, but if not you can grab some from me.
+## Simple Networking Tutorials
+
+I am (slowly) building up a catalog of something akin to networking tutorials using the simulator, those
+can be found in the `demos` directory prefixed with a 3-digit number, which would be the suggested order
+to view and interact with them. If you are looking at this in GitHub, or have the code loaded into VSCode
+you should be able to click/load those without actually needing to run if you want to see the output.
+
+The `samples` directory contains non-interactive output of the Jupyter notebook which you can definitely 
+load without using Jupyter or Python or anything else.
 
 
 ## Internals

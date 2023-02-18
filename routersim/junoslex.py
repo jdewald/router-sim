@@ -7,7 +7,7 @@ reserved = {
    'table': 'TABLE',
 }
 
-tokens = ['ID', 'PREFIX', 'NEWLINE'] + list(reserved.values())
+tokens = ['PREFIX'] + list(reserved.values())
 
 t_PREFIX = r'[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(\/[0-9]{1,2})?'
 
@@ -30,4 +30,4 @@ def t_error(t):
     return t
 
 
-lex.lex(debug=1)
+lex.lex(debug=0)
