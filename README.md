@@ -3,7 +3,7 @@
 ## What the heck is this?
 
 This repository contains a toy implementation of router technologies intended for exploration and learning. 
-Specifically, it will implement various routing protocols (IS-IS, OSPF, BGP, static) as well as performing routing (forwarding) of packets based on teh derived tables.
+Specifically, it will implement various routing protocols (IS-IS, OSPF, BGP, static) as well as performing routing (forwarding) of packets based on the derived tables.
 
 In terms of router implementation the following is there:
 * Packet forwarding
@@ -37,24 +37,23 @@ As a mechanism to provide an all-in-one and convenient method to run and view th
 
 You can see an example of what the [notebook can do here](samples/isis_demo/isis_demo.md).
 ### QuickStart
+    
+This QuickStart assumes you have access to Docker
 
-A container has been pre-built and available to just download and run if you don't want to build locally
+After cloning:
 
-Create a directory which will hold your notebooks. Note that this is the same base path you may be using for the existing data-eng Needle notebook
+`docker build -f Dockerfile -t routersim:latest .`
 
-`mkdir -p $HOME/needle_notebooks/routersim`
+Then to start it up and use the pre-built 'demos' directory without needing to re-upload:
 
-Grab the image
+`docker run -v $PWD/demos:/home/jovyan/work -p 8888:8888 routersim:latest`
 
-`docker pull jdewald/routersim-notebook:latest`
+You can also copy notebooks over wherever you might want and just mount that directory. 
+NOTE: that `/home/joyvan/work` should be left as-is, as it's from the base notebook and I didn't see a reason to change.
 
-Run the image, mounting the directory to /notebooks/my_notebooks which the container is aware of. You can use any local port, but 8888 will be the container port
+After it starts, it will give a token-based link which you can open in your browser.
 
-`sudo docker run --rm -p 8888:8888 -v $HOME/needle_notebooks:/notebooks/my_notebooks routersim-notebook:latest`
-
-You will see a path in the output, you can visit that (e.g http://localhost:8888/?token=...)
-
-Ideally you will see some notebooks in the `demos` folder, but if not you can grab some from me.
+Eventually I'll push up a docker image you can use without needing to build. 
 
 
 ## Internals
