@@ -1,3 +1,4 @@
 routersim/**/__pycache__/**
 build/**
 routersim.egg-info
+.venv/

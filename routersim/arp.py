@@ -3,7 +3,8 @@ import binascii
 from enum import Enum
 from ipaddress import IPv4Address
 
-from .messaging import IPPacket, MACAddress
+from scapy.layers.inet import IP
+from .messaging import MACAddress
 from .interface import LogicalInterface
 
 
@@ -105,7 +106,9 @@ class ArpHandler:
         if packet.arp_type == ArpType.Request:
 
             # TODO: An interface can have multiple addresses
-            if packet.target_address == interface.address().ip:
+            self.logger.info(f"Its a request...{str(packet.target_address)} {str(interface.address().ip)}")
+            if str(packet.target_address) == str(interface.address().ip):
+                self.logger.info(f"\tSending reply")
                 self.reply(
                     packet.hw_address,
                     packet.source_address,
@@ -121,12 +124,12 @@ class ArpHandler:
             del self.send_q[packet.source_address]
 
     # TODO: This probably belongs in the "sender"
-    def enqueue(self, pdu: IPPacket, interface: LogicalInterface):
-        if pdu.dest_ip not in self.send_q:
-            self.send_q[pdu.dest_ip] = []
+    def enqueue(self, pdu: IP, interface: LogicalInterface):
+        if pdu.dst not in self.send_q:
+            self.send_q[pdu.dst] = []
 
         self.logger.debug(f"Enqueued {pdu} waiting for ARP")
-        self.send_q[pdu.dest_ip].append((pdu, interface))
+        self.send_q[pdu.dst].append((pdu, interface))
 
     def request(self, target: IPv4Address, interface: LogicalInterface):
 

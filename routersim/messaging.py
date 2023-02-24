@@ -71,7 +71,7 @@ class Frame:
         return f"{self.src}->{self.dest} {self.type} ~ {self.pdu}"
 
 
-class IPPacket:
+class _IPPacket:
     def __init__(self, dest_ip, source_ip, protocol: IPProtocol, pdu, router_alert=False, ttl=64):
         self.source_ip = source_ip
         self.dest_ip = dest_ip

@@ -5,7 +5,7 @@ from .isis.process import IsisProcess
 from .routing import RoutingTables, Route, RouteType
 from .observers import EventManager, EventType, LoggingObserver, Event
 from .observers import GlobalQueueManager
-from .messaging import FrameType, IPPacket, IPProtocol, ICMPMessage, ICMPType, Frame, MACAddress, RSVPMessage
+from .messaging import FrameType, IPProtocol, ICMPMessage, ICMPType, Frame, MACAddress, RSVPMessage
 from .messaging import BROADCAST_MAC
 from .forwarding import PacketForwardingEngine, ForwardingTable
 from .interface import ConnectionState, LogicalInterface
@@ -110,7 +110,7 @@ class PacketListener:
         # Treat this as exception traffic
         # In "real life" the PFE would actuall see it first, so we're
         # currently treating this listener as part of the PFE
-        if frame.dest == BROADCAST_MAC or frame.dest == logint.hw_address:
+        if frame.dest == BROADCAST_MAC:
             self.router.process_frame(frame, logint)
         else:
             self.router.pfe.process_frame(frame, source_interface=logint)
@@ -185,49 +185,23 @@ class Router(NetworkDevice):
             return
 
         if frame.type == FrameType.ARP:
+            self.logger.info("Processing arp")
             self.arp.process(frame.pdu, source_interface)
         elif frame.type == FrameType.IPV4:
+
             self.process_packet(source_interface, frame.pdu)
 
     def process_arp(self, source_interface, pdu):
         self.arp.process(pdu, source_interface)
 
     def process_packet(self, source_interface, packet):
-        self.logger.info(f"Received {packet.pdu}")
+        self.logger.info(f"Received {packet}")
 
-        if isinstance(packet.pdu, ICMPMessage):
-            if packet.pdu.type == ICMPType.EchoRequest:
+        if super().process_packet(source_interface, packet):
+            return True
 
-                packet = IPPacket(
-                    packet.source_ip,
-                    packet.dest_ip,
-                    IPProtocol.ICMP,
-                    ICMPMessage(
-                        ICMPType.EchoReply,
-                        payload=packet.pdu.payload
-                    )
-                )
-                # In real life, I'm not sure we would do this
-                # but would look it up?
-                self.send_ip(packet)
-            elif packet.pdu.type == ICMPType.EchoReply:
-                self.event_manager.observe(Event(
-                    EventType.ICMP,
-                    self,
-                    msg=f"Received Echo Reply {packet.pdu.payload}",
-                    object=packet,
-                    sub_type=packet.pdu.type
-                ))
-            elif packet.pdu.type == ICMPType.DestinationUnreachable:
-                self.event_manager.observe(Event(
-                    EventType.ICMP,
-                    self,
-                    msg=f"Received Unreachable ({packet.pdu.code})",
-                    object=packet,
-                    sub_type=packet.pdu.type
-                ))
-        elif isinstance(packet.pdu, RSVPMessage):
-            self.process['rsvp'].process_packet(source_interface, packet)
+        if isinstance(packet.pdu, RSVPMessage):
+            return self.process['rsvp'].process_packet(source_interface, packet)
 
     def static_route(self, dest_prefix, gw_int):
         if isinstance(dest_prefix, str):
@@ -264,7 +238,7 @@ class Router(NetworkDevice):
     def send_ip(self, packet, source_interface=None):
 
         if source_interface is None:
-            route = self.routing.lookup_ip(packet.dest_ip)
+            route = self.routing.lookup_ip(packet.dst)
 
             if route is not None:
                 source_interface = route.interface

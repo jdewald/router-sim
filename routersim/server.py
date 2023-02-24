@@ -147,7 +147,8 @@ class Server(NetworkDevice):
     # our packet, we need to to know it's Layer 2 (Ethernet) address. This
     def send_ip(self, packet, source_interface=None):
   
-        route = self.routing.lookup_ip(packet.dest_ip)
+  #      route = self.routing.lookup_ip(packet.dest_ip)
+        route = self.routing.lookup_ip(packet.dst)
         if route is None:
             # TODO: NoRouteException
             raise Exception()
@@ -161,7 +162,8 @@ class Server(NetworkDevice):
         # local network to go over Layer 2, or if it should be sent off
         # to to the default route
         lookup_addr = route.next_hop_ip
-        dest_ip = packet.dest_ip
+#        dest_ip = packet.dest_ip
+        dest_ip = packet.dst
         dest_ip_as_net = ipaddress.ip_network(f"{dest_ip}/32")
         if source_interface.address().network.overlaps(dest_ip_as_net):
             lookup_addr = dest_ip

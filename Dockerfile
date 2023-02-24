@@ -14,9 +14,12 @@ COPY routersim /opt/app/routersim
 COPY plantuml.py /opt/app
 COPY simhelpers.py /opt/app
 COPY setup.py /opt/app
+RUN pip install scapy
+
 WORKDIR /opt/app
 RUN python3 setup.py install 
 
 # restore back to the jupyter base. Might get rid of this?
 USER ${NB_UID}
 WORKDIR "${HOME}"
+COPY demos/ ${HOME}/work/demos

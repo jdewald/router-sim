@@ -1,11 +1,15 @@
 
 from .interface import PhysicalInterface
-from .messaging import ICMPMessage, ICMPType, IPPacket, IPProtocol, MACAddress
+from .messaging import ICMPMessage, ICMPType, IPProtocol, MACAddress
+
 from .observers import Event, EventManager, EventType, GlobalQueueManager
 from .junos import parser as junos
 import ipaddress
 import logging
 import random
+import json
+
+from scapy.layers.inet import IP,ICMP
 
 
 class NetworkDevice():
@@ -78,31 +82,41 @@ class NetworkDevice():
         return intf
 
     def process_packet(self, source_interface, packet):
-        self.logger.info(f"Received {packet.pdu}")
+        payload = packet.payload
+        self.logger.info(f"Received {payload} ({payload.type})")
 
-        if isinstance(packet.pdu, ICMPMessage):
-            if packet.pdu.type == ICMPType.EchoRequest:
-                packet = IPPacket(
-                    packet.source_ip,
-                    packet.dest_ip,
-                    IPProtocol.ICMP,
-                    ICMPMessage(
-                        ICMPType.EchoReply,
-                        payload=packet.pdu.payload
-                    )
-                )
+        if isinstance(payload, ICMPMessage) or isinstance(payload, ICMP):
+            if payload.type == ICMPType.EchoRequest.value:
+                packet = IP(
+                    src = packet.dst,
+                    dst = packet.src    
+                ) / ICMP (
+                    type = ICMPType.EchoReply
+                ) / payload.payload
+
+                #packet = IPPacket(
+                #    packet.source_ip,
+                #    packet.dest_ip,
+                #    IPProtocol.ICMP,
+                #    ICMPMessge(
+                #        ICMPType.EchoReply,
+                #        payload=packet.pdu.payload
+                #    )
+                #)
                 # In real life, I'm not sure we would do this
                 # but would look it up?
                 self.send_ip(packet)
-            elif packet.pdu.type == ICMPType.EchoReply:
+                return True
+            elif payload.type == ICMPType.EchoReply.value:
                 self.event_manager.observe(Event(
                     EventType.ICMP,
                     self,
-                    msg=f"Received Echo Reply {packet.pdu.payload}",
+                    msg=f"Received Echo Reply {payload.payload}",
                     object=packet,
-                    sub_type=packet.pdu.type
+                    sub_type=payload.type
                 ))
-            elif packet.pdu.type == ICMPType.DestinationUnreachable:
+                return True
+            elif payload.type == ICMPType.DestinationUnreachabl.valuee:
                 self.event_manager.observe(Event(
                     EventType.ICMP,
                     self,
@@ -110,6 +124,8 @@ class NetworkDevice():
                     object=packet,
                     sub_type=packet.pdu.type
                 ))
+                return True
+        return False
 
     def ping(self, ip_address, source_interface=None,
              source_ip=None, count=5, timeout=1000):
@@ -133,16 +149,18 @@ class NetworkDevice():
         print(f"PING {ip_address}")
 
         def ping_handler(evt):
-            if (evt.object.pdu.type == ICMPType.EchoReply and
-                evt.object.pdu.payload['id'] == state['lastsent']):
+            # scapy
+            pdu = evt.object.payload
+            pingpayload = json.loads(pdu.payload.load)
+            if (pdu.type == ICMPType.EchoReply.value and pingpayload['id'] == state['lastsent']):
                 delta = GlobalQueueManager.now(
-                ) - evt.object.pdu.payload['time']
+                ) - pingpayload['time']
                 print(
-                    f"\tReceived reply from {evt.object.source_ip} - {delta} ms")
+                    f"\tReceived reply from {evt.object.src} - {delta} ms")
                 state['lost'] = False
-            elif (evt.object.pdu.type == ICMPType.DestinationUnreachable and
+            elif (pdu.type == ICMPType.DestinationUnreachable.value and
                   evt.object.pdu.payload[2]['id'] == state['lastsent']):
-                print(f"\t{evt.object.pdu} from {evt.object.source_ip}")
+                print(f"\t{pdu} from {evt.object.src}")
                 state['lost'] = False
 
         def check_and_send():
@@ -178,12 +196,18 @@ class NetworkDevice():
                 'id': self.pingid,
                 'time': GlobalQueueManager.now()
             }
-            packet = IPPacket(
-                ip_address,
-                source_ip,
-                IPProtocol.ICMP,
-                ICMPMessage(ICMPType.EchoRequest, payload=pingpayload)
-            )
+            #packet = IPPacket(
+            #    ip_address,
+            #    source_ip,
+            #    IPProtocol.ICMP,
+            #    ICMPMessage(ICMPType.EchoRequest, payload=pingpayload)
+            #)
+            packet = IP(
+                src = source_ip,
+                dst = ip_address
+            ) / ICMP (
+                type=ICMPType.EchoRequest
+            ) / json.dumps(pingpayload)
             state['lastsent'] = pingpayload['id']
             state['lost'] = True
             state['remaining'] = state['remaining'] - 1

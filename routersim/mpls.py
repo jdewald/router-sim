@@ -1,5 +1,4 @@
 from collections import UserDict
-from .messaging import IPPacket
 from .observers import Event, EventType
 
 from abc import ABC, abstractmethod

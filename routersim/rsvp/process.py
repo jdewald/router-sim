@@ -3,13 +3,14 @@ from .object import IPV4SenderTemplate, Session, LSPTunnelSessionAttribute, Filt
 from .pdu import Path, Resv
 from copy import copy, deepcopy
 from ..observers import GlobalQueueManager, Event, EventType
-from ..messaging import IPPacket, IPProtocol
+from ..messaging import IPProtocol
 from ..routing import RSVPRoute, RouteType
 import random
 import pprint
 import functools
 import sys
 from ipaddress import IPv4Address, ip_network
+from scapy.layers.inet import IP,IPOption_Router_Alert
 
 # https://www.juniper.net/documentation/en_US/release-independent/nce/topics/example/mpls-lsp-link-protect-solutions.html
 # https://www.juniper.net/documentation/en_US/release-independent/nce/topics/concept/mpls-lsp-node-link-protect-overview-solutions.html
@@ -98,10 +99,18 @@ class RsvpProcess:
                 path_msg.set_hop(route.interface.address().ip)
                 path_msg.add_record(route.interface.address().ip)
 
-                packet = IPPacket(session.dest_ip,
-                                  session.source_ip,
-                                  IPProtocol.RSVP,
-                                  path_msg, router_alert=True)
+
+                packet = IP(
+                    dst=session.dest_ip,
+                    src=session.source_ip,
+                    protocol=IPProtocol.RESV,
+                    options=IPOption_Router_Alert(),
+                ) / path_msg
+
+                #packet = IPPacket(session.dest_ip,
+                #                  session.source_ip,
+                #                  IPProtocol.RSVP,
+                #                  path_msg, router_alert=True)
                 self.event_manager.observe(Event(
                     EventType.RSVP, self, f"Send Path message for LSP", object=path_msg, sub_type="SEND_PATH"))
 
@@ -336,12 +345,10 @@ class RsvpProcess:
                 filter=FilterSpec(pdu.sender.address, pdu.sender.lsp_id)
             )
 
-            packet = IPPacket(
-                pdu.hop.hop_address,
-                interface.address().ip,
-                IPProtocol.RSVP,
-                resv
-            )
+            packet = IP(
+                dst=pdu.hop.hop_address,
+                src=interface.address().ip,
+                protocol=IPProtocol.RSVP) / resv
             resv.set_label(3)  # Implicit null
             resv.set_hop(packet.source_ip)
 
@@ -508,12 +515,9 @@ class RsvpProcess:
             if psb.hop == our_ip:
                 self.logger.warn(f"Invalid self-RESV {resv.filter.address}, {self.source_ip}")
                 return
-            packet = IPPacket(
-                psb.hop,
-                our_ip,
-                IPProtocol.RSVP,
-                resv
-            )
+            packet = IP(
+                dst=psb.hop,
+                src=our_ip, protocol=IPProtocol.RSVP) / resv
             self.logger.info(packet)
             self.logger.info(f"When sending RESV, using interface {route.interface}")
             self.logger.debug(f"{self.router.hostname} forwarding RESV via {route.interface.name} to {psb.hop} for {psb.attributes.name}")
