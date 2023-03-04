@@ -1,6 +1,7 @@
 from ..observers import GlobalQueueManager, Event, EventType
 from ..interface import LogicalInterface, PhysicalInterface
-from ..messaging import BROADCAST_MAC, Frame, MACAddress
+from ..messaging import BROADCAST_MAC, MACAddress
+from scapy.layers.l2 import Ether
 
 from binascii import hexlify
 
@@ -97,7 +98,7 @@ class SwitchingEngine():
 
     # A frame always comes over a PhysicalInterface, and then may get
     # interpreted as a LogicalInterface depending on data in the frame
-    def process_frame(self, frame: Frame, source_interface: PhysicalInterface):
+    def process_frame(self, frame: Ether, source_interface: PhysicalInterface):
         self.logger.info("processing frame")
         # TODO: This is where we would look at the encapsulation to work
         # out where this is really intended
@@ -130,7 +131,7 @@ class SwitchingEngine():
             self.logger.info(f"Successfully found entry for {frame.dest}")
             out_interface.send_frame(frame)
 
-    def broadcast_frame(self, frame: Frame, source_interface: PhysicalInterface):
+    def broadcast_frame(self, frame: Ether, source_interface: PhysicalInterface):
         self.logger.info(f"Broadcasting {frame}")
         for interface in self.interfaces:
             if interface != source_interface.name:

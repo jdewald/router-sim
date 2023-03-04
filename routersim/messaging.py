@@ -1,5 +1,5 @@
 from enum import Enum
-
+from scapy.layers.l2 import Ether
 
 
 class FrameType(Enum):
@@ -16,6 +16,12 @@ class FrameType(Enum):
 
     def __str__(self):
         return self.name
+    
+    def __eq__(self, other):
+        return int(self.value) == int(other)
+    
+    def __hash__(self):
+        return hash(self.value)
 
 
 # https://en.wikipedia.org/wiki/List_of_IP_protocol_numbers
@@ -51,13 +57,16 @@ class MACAddress():
         return (self.__class__ == other.__class__ and
                 self.bytes == other.bytes
                 )
+    
+    def __len__(self):
+        return len(self.bytes)
 
     def __str__(self):
         return self.bytes.hex(":", 1)
 
 BROADCAST_MAC = MACAddress(bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]))
 
-class Frame:
+class frame:
 
     def __init__(self,
                  src: MACAddress, dest: MACAddress,

@@ -2,7 +2,9 @@ from enum import Enum
 import ipaddress
 import binascii
 from .observers import Event, EventType, GlobalQueueManager
-from .messaging import Frame, FrameType, MACAddress
+from .messaging import frame, FrameType, MACAddress
+from scapy.layers.l2 import Ether
+#from scapy.layers.clns import 
 from copy import deepcopy
 
 
@@ -80,11 +82,6 @@ class PhysicalInterface:
 
         return self.link
 
-    def _send(self, frame_type, pdu, logical=None):
-        # no "arp" yet
-        frame = Frame(self.hw_address, "Unknown", frame_type, pdu)
-        self.send_frame(frame, logical=logical)
-
     def send_frame(self, frame, logical=None):
         if not self.is_up():
             return
@@ -100,7 +97,7 @@ class PhysicalInterface:
                 Event(
                     EventType.PACKET_RECV,
                     self,
-                    f"Received {frame.pdu}",
+                    f"Received {frame.payload}",
                     object=frame)
             )
 
@@ -136,7 +133,7 @@ class LogicalInterface:
     def is_physical(self):
         return False
 
-    def send_frame(self, frame: Frame):
+    def send_frame(self, frame: Ether):
         self.parent.send_frame(frame, logical=self)
 
     def send(self,
@@ -144,7 +141,7 @@ class LogicalInterface:
              frame_type: FrameType,
              pdu):
 
-        frame = Frame(self.hw_address, dest_address, frame_type, pdu)
+        frame = Ether(src=self.hw_address, dst=dest_address, type=frame_type) / pdu
         self.send_frame(frame)
 
     def _send_ip(self, pdu):

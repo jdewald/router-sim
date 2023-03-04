@@ -4,6 +4,8 @@ from scapy.interfaces import NetworkInterfaceDict, IFACES
 
 from scapy import interfaces
 from scapy.layers.inet import IP,ICMP,IPOption_Router_Alert
+from scapy.layers.l2 import ARP
+from .arp import ArpType
 
 # reset, as we don't want the default links
 # Then we can inject our interfaces as necessary
@@ -34,3 +36,12 @@ ICMP.seq_note = icmp_seq_note
 IP.seq_note = seq_note
 IP.inspectable = ip_inspectable
 
+
+def arp_str(self) -> str:
+    if self.op == ArpType.Request.value:
+        return f"ARP Request Who-Is {self.pdst}, tell {self.psrc} at {self.hwsrc}"
+    else:
+        return f"ARP Response {self.psrc} is {self.hwsrc}"
+
+
+ARP.__str__ = arp_str

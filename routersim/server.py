@@ -2,12 +2,13 @@ from routersim.interface import LogicalInterface
 from .netdevice import NetworkDevice
 from .routing import RoutingTables, Route, RouteType
 from .observers import LoggingObserver, EventType
-from .messaging import BROADCAST_MAC, Frame, FrameType
+from .messaging import BROADCAST_MAC, FrameType
 from .arp import ArpHandler
 import ipaddress
 from .scapy import RouterSimRoute
 from scapy.sendrecv import send as scapy_l3_send
 from scapy.config import conf as scapy_conf
+from scapy.layers.l2 import Ether
 
 class RouteTableUpdater:
     def __init__(self, router):
@@ -185,11 +186,11 @@ class Server(NetworkDevice):
                             FrameType.IPV4,
                             packet)
 
-    def process_frame(self, frame: Frame, source_interface: LogicalInterface):
-        if frame.dest != BROADCAST_MAC and frame.dest != source_interface.hw_address:
+    def process_frame(self, frame: Ether, source_interface: LogicalInterface):
+        if frame.dst != BROADCAST_MAC and frame.dst != source_interface.hw_address:
             return
 
-        if frame.type == FrameType.ARP:
-            self.arp.process(frame.pdu, source_interface)
-        elif frame.type == FrameType.IPV4:
-            self.process_packet(source_interface, frame.pdu)
+        if int(frame.type) == FrameType.ARP:
+            self.arp.process(frame.payload, source_interface)
+        elif int(frame.type) == FrameType.IPV4:
+            self.process_packet(source_interface, frame.payload)

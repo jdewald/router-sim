@@ -4,6 +4,7 @@ from enum import Enum
 from ipaddress import IPv4Address
 
 from scapy.layers.inet import IP
+from scapy.layers.l2 import ARP
 from .messaging import MACAddress
 from .interface import LogicalInterface
 
@@ -48,30 +49,6 @@ class ArpEntry:
         self.l2address = l2address
         self.last_used = used
 
-
-# We are assuming we're going for Ethernet adress
-class ArpPacket:
-    def __init__(self,
-                 arp_type: ArpType,
-                 hw_address: MACAddress,
-                 source_address: IPv4Address,
-                 target_hw: MACAddress,
-                 target_address: IPv4Address,
-                 protocol: FrameType = FrameType.IPV4):
-        self.arp_type = arp_type
-        self.protocol = protocol
-        self.hw_address = hw_address
-        self.source_address = source_address
-        self.target_hw = target_hw
-        self.target_address = target_address
-
-    def __str__(self):
-        if self.arp_type == ArpType.Request:
-            return f"ARP Request Who-Is {self.target_address}, tell {self.source_address} at {self.hw_address}"
-        else:
-            return f"ARP Response {self.source_address} is {self.hw_address}"
-
-
 class ArpHandler:
     def __init__(self, sender, event_manager, logger, cache=None, queue=None):
         self.sender = sender
@@ -88,40 +65,40 @@ class ArpHandler:
         else:
             self.send_q = queue
 
-    def process(self, packet: ArpPacket, interface: LogicalInterface):
+    def process(self, packet: ARP, interface: LogicalInterface):
         # ARP Poisoning, whaddup
-        if self.cache[packet.source_address] != packet.hw_address:
+        if self.cache[packet.psrc] != packet.hwsrc:
             self.event_manager.observe(
                 ArpEvent(
                     self,
                     "Added ARP Entry",
-                    (packet.source_address, packet.hw_address),
+                    (packet.psrc, packet.hwsrc),
                     "ARP_ADD"
                 )
             )
 
         # We need to "ping" it to refresh it from aging out
-        self.cache[packet.source_address] = packet.hw_address
+        self.cache[packet.psrc] = packet.hwsrc
 
-        if packet.arp_type == ArpType.Request:
+        if packet.op == ArpType.Request.value:
 
             # TODO: An interface can have multiple addresses
-            self.logger.info(f"Its a request...{str(packet.target_address)} {str(interface.address().ip)}")
-            if str(packet.target_address) == str(interface.address().ip):
+            self.logger.debug(f"Its a request...{str(packet.pdst)} {str(interface.address().ip)}")
+            if str(packet.pdst) == str(interface.address().ip):
                 self.logger.info(f"\tSending reply")
                 self.reply(
-                    packet.hw_address,
-                    packet.source_address,
-                    packet.target_address,
+                    packet.hwsrc,
+                    packet.psrc,
+                    packet.pdst,
                     interface
                 )
 
-        if packet.source_address in self.send_q:
-            self.logger.debug(f"Sending queued items to {packet.source_address}")
-            for item in self.send_q[packet.source_address]:
+        if packet.psrc in self.send_q:
+            self.logger.debug(f"Sending queued items to {packet.psrc}")
+            for item in self.send_q[packet.psrc]:
                 pdu, interface = item
-                self.sender.send_frame(interface, packet.hw_address, FrameType.IPV4, pdu)
-            del self.send_q[packet.source_address]
+                self.sender.send_frame(interface, packet.hwsrc, FrameType.IPV4, pdu)
+            del self.send_q[packet.psrc]
 
     # TODO: This probably belongs in the "sender"
     def enqueue(self, nh: IPv4Address, pdu: IP, interface: LogicalInterface):
@@ -133,11 +110,13 @@ class ArpHandler:
 
     def request(self, target: IPv4Address, interface: LogicalInterface):
 
-        packet = ArpPacket(arp_type=ArpType.Request,
-                           hw_address=interface.hw_address,
-                           source_address=interface.address().ip,
-                           target_hw=None,
-                           target_address=target)
+        packet = ARP(
+            op=ArpType.Request,
+            hwsrc = interface.hw_address,
+            psrc = interface.address().ip,
+            pdst=target,
+        )
+
         # Observe ARP
         interface.send(BROADCAST_MAC, FrameType.ARP, packet)
 
@@ -147,12 +126,13 @@ class ArpHandler:
               from_address: IPv4Address,
               interface: LogicalInterface):
 
-        packet = ArpPacket(ArpType.Reply,
-                           interface.hw_address,
-                           from_address,
-                           target_hw,
-                           target_address,
-                           )
+        packet = ARP(
+            op = ArpType.Reply,
+            hwsrc = interface.hw_address,
+            psrc = from_address,
+            hwdst = target_hw,
+            pdst = target_address,
+        )
 
         interface.send(target_hw, FrameType.ARP, packet)
 

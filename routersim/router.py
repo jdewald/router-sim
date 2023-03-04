@@ -5,12 +5,11 @@ from .isis.process import IsisProcess
 from .routing import RoutingTables, Route, RouteType
 from .observers import EventManager, EventType, LoggingObserver, Event
 from .observers import GlobalQueueManager
-from .messaging import FrameType, IPProtocol, ICMPMessage, ICMPType, Frame, MACAddress, RSVPMessage
+from .messaging import FrameType, MACAddress, RSVPMessage
 from .messaging import BROADCAST_MAC
 from .forwarding import PacketForwardingEngine, ForwardingTable
 from .interface import ConnectionState, LogicalInterface
-from .netdevice import NetworkDevice
-from .arp import ArpHandler, ArpPacket
+from .arp import ArpHandler
 import ipaddress
 import logging
 from functools import partial
@@ -111,7 +110,7 @@ class PacketListener:
         # Treat this as exception traffic
         # In "real life" the PFE would actuall see it first, so we're
         # currently treating this listener as part of the PFE
-        if frame.dest == BROADCAST_MAC or frame.dest == logint.hw_address:
+        if frame.dst == BROADCAST_MAC or frame.dst == logint.hw_address:
             self.router.process_frame(frame, logint)
         else:
             self.router.pfe.process_frame(frame, source_interface=logint)
@@ -227,24 +226,6 @@ class Router(Server):
         interface.send(dest_address, frame_type, pdu)
 
  
-    def _send_ip(self, packet, source_interface=None):
-
-        if source_interface is None:
-            route = self.routing.lookup_ip(packet.dst)
-
-            if route is not None:
-                source_interface = route.interface
-
-        # Once we do layer2, we might just ship the IPV4 to it?
-        GlobalQueueManager.enqueue(
-            0,
-            self.pfe.accept_frame,
-            arguments=(Frame("000", "000", FrameType.IPV4, packet),
-                       source_interface)
-        )
-
-
-
     def create_lsp(self, lsp_name, dest_ip, link_protection=False):
         """
         Kick off the logic to issue RSVP Path messages
