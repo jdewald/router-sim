@@ -37,11 +37,11 @@ host2.static_route("0.0.0.0/0", "10.1.2.1", "et1.0")
 
 topology.run_another(100)
 
-host.ping("10.1.1.1", count=2)
+host.ping("10.1.2.100", count=2)
 
 events = topology.run_another(5000)
 with open("hostping.puml", "w") as f:
-    sequence = frame_sequence("Sending PING", [host, router], events)
+    sequence = frame_sequence("Sending PING", [host, router, host2], events)
     f.write(sequence.render_syntax())
 
 f = junos.parse("show route")
