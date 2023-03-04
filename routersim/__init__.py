@@ -1,12 +1,18 @@
-from scapy import config as scapconf
+from scapy.config import conf as scapconf
+
 from scapy.interfaces import NetworkInterfaceDict, IFACES
 
-
-# reset, as we don't want the default link
-scapconf.ifaces = IFACES = NetworkInterfaceDict()
-
-
+from scapy import interfaces
 from scapy.layers.inet import IP,ICMP,IPOption_Router_Alert
+
+# reset, as we don't want the default links
+# Then we can inject our interfaces as necessary
+scapconf.ifaces = IFACES = NetworkInterfaceDict()
+interfaces.IFACES = None
+scapconf.ifaces = None
+scapconf.iface = None
+
+
 def seq_note(self):
     notefn = getattr(self.payload, "seq_note", None)
     if notefn is not None:

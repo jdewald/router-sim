@@ -124,12 +124,12 @@ class ArpHandler:
             del self.send_q[packet.source_address]
 
     # TODO: This probably belongs in the "sender"
-    def enqueue(self, pdu: IP, interface: LogicalInterface):
-        if pdu.dst not in self.send_q:
-            self.send_q[pdu.dst] = []
+    def enqueue(self, nh: IPv4Address, pdu: IP, interface: LogicalInterface):
+        if nh not in self.send_q:
+            self.send_q[nh] = []
 
-        self.logger.debug(f"Enqueued {pdu} waiting for ARP")
-        self.send_q[pdu.dst].append((pdu, interface))
+        self.logger.debug(f"Enqueued {pdu} waiting for ARP of {nh}")
+        self.send_q[nh].append((pdu, interface))
 
     def request(self, target: IPv4Address, interface: LogicalInterface):
 

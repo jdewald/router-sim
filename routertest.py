@@ -12,8 +12,10 @@ import logging
 logging.basicConfig()
 
 
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 topology = Topology("My Topology!")
-topology.logger.setLevel("INFO")
+topology.logger.setLevel(logging.INFO)
 
 r1 = topology.add_router("r1", interfaces=['et1', 'et2'])
 r2 = topology.add_router("r2", interfaces=['et1', 'et2'])
@@ -107,7 +109,7 @@ r1.show_isis_database()
 sequence = packet_sequence("Sending PING", [r1, r2, r3])
 r3.ping(ipaddress.ip_address("100.65.0.0"))
 
-events = topology.run_another(500)
+events = topology.run_another(20000)
 
 with open("ping.puml", "w") as f:
     for evt_data in events:

@@ -5,7 +5,9 @@ from .observers import LoggingObserver, EventType
 from .messaging import BROADCAST_MAC, Frame, FrameType
 from .arp import ArpHandler
 import ipaddress
-
+from .scapy import RouterSimRoute
+from scapy.sendrecv import send as scapy_l3_send
+from scapy.config import conf as scapy_conf
 
 class RouteTableUpdater:
     def __init__(self, router):
@@ -143,6 +145,10 @@ class Server(NetworkDevice):
         # such that we can just dump this on the wire. 
         interface.send(dest_address, frame_type, pdu)
 
+    def scapy_send_ip(self, packet, source_interface=None):
+        scapy_conf.route = RouterSimRoute(self.routing)
+        scapy_l3_send(packet)
+
     # In order to send a Layer 3 (IP) packet that is on the same layer 3 network as
     # our packet, we need to to know it's Layer 2 (Ethernet) address. This
     def send_ip(self, packet, source_interface=None):
@@ -169,10 +175,10 @@ class Server(NetworkDevice):
             lookup_addr = dest_ip
 
         mac_address = self.arp.cache.get(lookup_addr)
-
+  
         if mac_address is None:
-            self.arp.enqueue(packet, source_interface)
-            self.arp.request(dest_ip, source_interface)
+            self.arp.enqueue(lookup_addr, packet, source_interface)
+            self.arp.request(lookup_addr, source_interface)
         else:
             self.send_frame(source_interface,
                             mac_address,

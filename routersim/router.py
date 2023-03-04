@@ -15,6 +15,7 @@ import ipaddress
 import logging
 from functools import partial
 from copy import copy
+from .server import Server
 
 
 # TODO: Refer to https://flylib.com/books/en/2.515.1.18/1/#:~:text=The%20Routing%20Engine%20and%20Packet,scale%20networks%20at%20high%20speeds.
@@ -110,13 +111,15 @@ class PacketListener:
         # Treat this as exception traffic
         # In "real life" the PFE would actuall see it first, so we're
         # currently treating this listener as part of the PFE
-        if frame.dest == BROADCAST_MAC:
+        if frame.dest == BROADCAST_MAC or frame.dest == logint.hw_address:
             self.router.process_frame(frame, logint)
         else:
             self.router.pfe.process_frame(frame, source_interface=logint)
 
 
-class Router(NetworkDevice):
+# A router is essentially a regular server (the control plane)
+# a badass set of network cards (the fowrarding plane/packet fowarding engine)
+class Router(Server):
 
     def __init__(self, hostname, loopback_address):
         super().__init__(hostname)
@@ -180,17 +183,6 @@ class Router(NetworkDevice):
     def show_isis_database(self):
         self.process['isis'].print_database()
 
-    def process_frame(self, frame: Frame, source_interface: LogicalInterface):
-        if frame.dest != BROADCAST_MAC and frame.dest != source_interface.hw_address:
-            return
-
-        if frame.type == FrameType.ARP:
-            self.logger.info("Processing arp")
-            self.arp.process(frame.pdu, source_interface)
-        elif frame.type == FrameType.IPV4:
-
-            self.process_packet(source_interface, frame.pdu)
-
     def process_arp(self, source_interface, pdu):
         self.arp.process(pdu, source_interface)
 
@@ -228,14 +220,14 @@ class Router(NetworkDevice):
                    dest_address: MACAddress,
                    frame_type: FrameType,
                    pdu,
-                   source_override: None):
+                   source_override=None):
 
         # Assumption on this level is that we are over a shared medium
         # such that we can just dump this on the wire. 
-        interface.send_frame(dest_address, frame_type, pdu)
+        interface.send(dest_address, frame_type, pdu)
 
  
-    def send_ip(self, packet, source_interface=None):
+    def _send_ip(self, packet, source_interface=None):
 
         if source_interface is None:
             route = self.routing.lookup_ip(packet.dst)

@@ -164,9 +164,11 @@ class NetworkDevice():
                 state['lost'] = False
 
         def check_and_send():
+            now = self.event_manager.now()
             if state['lost']:
-                print(f"\t!! Lost after {timeout}ms")
+                print(f"\t!! Lost after {now - state['sent_time']}ms")
             if state['remaining'] > 0:
+                state['sent_time'] = now
                 send_packet(state['dest_ip'],
                             state['source_interface'], state['source_ip'])
             else:
@@ -210,8 +212,9 @@ class NetworkDevice():
             ) / json.dumps(pingpayload)
             state['lastsent'] = pingpayload['id']
             state['lost'] = True
+            state['sent_time'] = self.event_manager.now()
             state['remaining'] = state['remaining'] - 1
-            self.send_ip(packet, source_interface=source_interface)
+            self.scapy_send_ip(packet, source_interface=source_interface)
             GlobalQueueManager.enqueue(timeout, check_and_send)
 
         state['handler'] = ping_handler

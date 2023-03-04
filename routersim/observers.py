@@ -116,3 +116,6 @@ class EventManager:
 
         self.listeners[event_type].clear()
 #        self.listeners[event_type].remove(observer)
+
+    def now(self):
+        return GlobalQueueManager.now()
