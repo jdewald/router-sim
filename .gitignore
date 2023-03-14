@@ -2,3 +2,7 @@ routersim/**/__pycache__/**
 build/**
 routersim.egg-info
 .venv/
+__pycache__/plantuml.cpython-310.pyc
+__pycache__/simhelpers.cpython-310.pyc
+.gitignore
+demos/.ipynb_checkpoints/001_lan-checkpoint.ipynb

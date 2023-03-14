@@ -50,13 +50,18 @@ class PhysicalInterface:
         self.interfaces[name] = LogicalInterface(
             name, self, addresses=addresses)
         self.interfaces[name].event_manager = self.event_manager
+        if self.is_up():
+            self.interfaces[name].up()
         return self.interfaces[name]
     
     # get first logical interface, if there is one
     def logical(self):
         if len(self.interfaces) > 0:
             return list(self.interfaces.values())[0]
-        return None
+        # is it safe to send ourself here?
+
+        self.add_logical_interface(self.name + ".0")
+        return self.interfaces[self.name + ".0"]
 
 
     # Should only be called to indicate that both sides are up
@@ -132,6 +137,9 @@ class LogicalInterface:
 
     def is_physical(self):
         return False
+    
+    def logical(self):
+        return self
 
     def send_frame(self, frame: Ether):
         self.parent.send_frame(frame, logical=self)

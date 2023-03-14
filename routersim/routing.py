@@ -235,7 +235,7 @@ class RoutingTables:
                     sub_type='ROUTE_DELETED',
                     target=table_name))
         else:
-            self.logger.warn(f"{prefix} not in table {table_name}, can't delete")
+            self.logger.info(f"{prefix} not in table {table_name}, can't delete")
 #            raise Exception("Nothing to delete!")
 
     def add_route(self, route, table, src=None):
@@ -254,7 +254,7 @@ class RoutingTables:
                 Event(
                     EventType.ROUTE_CHANGE,
                     src if src is not None else self,
-                    f"Added {route.type} route to {route.prefix}",
+                    f"Added {route.type} route to {route.prefix} via {route.next_hop_ip}",
                     object=route,
                     sub_type='ROUTE_ADDED',
                     target=table))

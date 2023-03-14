@@ -104,8 +104,8 @@ class SwitchingEngine():
         # out where this is really intended
 
         out_interface = None
-        if frame.dest != BROADCAST_MAC:
-            out_interface = self.bridging.lookup_mac(frame.dest)
+        if frame.dst != BROADCAST_MAC:
+            out_interface = self.bridging.lookup_mac(frame.dst)
 
         # Right now still assuming single physical interface
         for logical in source_interface.interfaces.values():
@@ -118,7 +118,7 @@ class SwitchingEngine():
             # This can mean either that we haven't learned it, or its one of our own
             found = False
             for logical in source_interface.interfaces.values():
-                if frame.dest == logical.hw_address:
+                if frame.dst == logical.hw_address:
                     self.switch.process_frame(frame, logical)
                     found = True
 
@@ -128,7 +128,7 @@ class SwitchingEngine():
                                         )
 
         else:
-            self.logger.info(f"Successfully found entry for {frame.dest}")
+            self.logger.info(f"Successfully found entry for {frame.dst}")
             out_interface.send_frame(frame)
 
     def broadcast_frame(self, frame: Ether, source_interface: PhysicalInterface):

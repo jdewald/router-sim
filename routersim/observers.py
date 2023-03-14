@@ -43,6 +43,8 @@ class EventType(Enum):
     ARP = 12
     BRIDGING = 13
 
+    DHCP = 14
+
     def __str__(self):
         return str(self.name)
 
@@ -114,8 +116,16 @@ class EventManager:
         if event_type not in self.listeners:
             return
 
-        self.listeners[event_type].clear()
-#        self.listeners[event_type].remove(observer)
+#        self.listeners[event_type].clear()
+        
+        idx = None
+        for i, obs in enumerate(self.listeners[event_type]):
+            if obs == observer:
+                idx = i
+                break
+
+        if idx is not None:
+            self.listeners[event_type].pop(idx)
 
     def now(self):
         return GlobalQueueManager.now()

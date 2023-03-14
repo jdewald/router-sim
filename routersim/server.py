@@ -9,42 +9,60 @@ from .scapy import RouterSimRoute
 from scapy.sendrecv import send as scapy_l3_send
 from scapy.config import conf as scapy_conf
 from scapy.layers.l2 import Ether
+from scapy.layers.inet import UDP,TCP
+from dataclasses import dataclass
+from .dhcp import DHCPClient
+
+V4_ADDR_UNSPECIFIED = "0.0.0.0"
+@dataclass(frozen=True)
+class SocketDef:
+    proto: str
+    local: str
+    local_port: int
+    remote: str = ""
+    remote_port: int = -1
 
 class RouteTableUpdater:
     def __init__(self, router):
         self.router = router
 
+    def add_connected_route(self, iface: LogicalInterface):
+        self.router.routing.add_route(
+            Route(
+                iface.addresses['ipv4'].network,
+                RouteType.CONNECTED,
+                iface,
+                None,
+                metric=1
+            ),
+            'direct',
+            src=iface.parent.parent
+        )
+        self.router.routing.add_route(
+            Route(
+                ipaddress.ip_network(
+                    (iface.addresses['ipv4'].ip, 32)),
+                RouteType.LOCAL,
+                iface,
+                None,
+                metric=1
+            ),
+            'direct',
+            src=iface.parent.parent
+        )
+
+
     def observe(self, evt):
-        if evt.event_type == EventType.LINK_STATE:
+        if evt.event_type == EventType.LINK_STATE or \
+            evt.event_type == EventType.INTERFACE_STATE:
             source = evt.source
 
             if source.is_up():
                 # Need to add connected routes
 
-                if not source.is_physical():
-                    self.router.routing.add_route(
-                        Route(
-                            source.addresses['ipv4'].network,
-                            RouteType.CONNECTED,
-                            source,
-                            None,
-                            metric=1
-                        ),
-                        'direct',
-                        src=source.parent.parent
-                    )
-                    self.router.routing.add_route(
-                        Route(
-                            ipaddress.ip_network(
-                                (source.addresses['ipv4'].ip, 32)),
-                            RouteType.LOCAL,
-                            source,
-                            None,
-                            metric=1
-                        ),
-                        'direct',
-                        src=source.parent.parent
-                    )
+                if not source.is_physical() and 'ipv4' in source.addresses:
+                    self.add_connected_route(source)
+
             else:
                 # BLEH.
                 if not source.is_physical():
@@ -72,6 +90,7 @@ class RouteTableUpdater:
                         src=source.parent.parent
                     )
 
+
 class PacketListener:
     def __init__(self, server):
         self.server = server
@@ -90,11 +109,8 @@ class PacketListener:
         # Still need to work out exactly how we distinguish these
         # assume it was meant for the first interfrace for now,
         # e.g. no vlan support
-        logint = None
-        for ifacename in physint.interfaces:
-            logint = physint.interfaces[ifacename]
-            #self.interfaces[ifacename].receive(frame)
-            break
+        logint = physint.logical()
+
 
         self.server.process_frame(frame, source_interface=logint)
 
@@ -112,6 +128,15 @@ class Server(NetworkDevice):
             EventType.PACKET_RECV, PacketListener(self).observe)
         self.event_manager.listen(
             EventType.LINK_STATE, RouteTableUpdater(self).observe)
+        self.event_manager.listen(
+            EventType.INTERFACE_STATE, RouteTableUpdater(self).observe
+        )
+
+        # TODO: Put this on PacketListener?
+        self.sockets = {
+            "UDP": {},
+            "TCP": {}
+        }
 
     def static_route(self, dest_prefix, gw_ip, gw_int):
         if isinstance(dest_prefix, str):
@@ -194,3 +219,48 @@ class Server(NetworkDevice):
             self.arp.process(frame.payload, source_interface)
         elif int(frame.type) == FrameType.IPV4:
             self.process_packet(source_interface, frame.payload)
+
+    def process_packet(self, source_interface, packet) -> bool:
+        if super().process_packet(source_interface, packet):
+            return True
+        
+
+        payload = packet.payload
+        if isinstance(payload, UDP):
+
+            udp_sockets = self.sockets["UDP"]
+
+            # TODO: Better search
+            listener = udp_sockets.get(SocketDef(
+                "UDP", 
+                packet.dst,
+                payload.dport))
+            
+            if listener is None:
+                listener = udp_sockets.get(
+                    SocketDef(
+                        "UDP",
+                        V4_ADDR_UNSPECIFIED,
+                        payload.dport
+                    )
+                )
+
+            if listener is None:
+                return False
+
+            listener(source_interface, packet)
+
+            return True
+
+
+    def listen_udp(self, port: int, listener):
+
+        listensock = SocketDef("UDP", V4_ADDR_UNSPECIFIED, port)
+
+        self.sockets["UDP"][listensock] = listener
+
+        
+    def dhcp_client_start(self):
+        self.dhcpclient = DHCPClient(self)
+
+        self.dhcpclient.discover(self.main_interface)

@@ -20,6 +20,7 @@ class NetworkDevice():
         self.logger = logging.getLogger(hostname)
         self.phy_interfaces = dict()
         self.event_manager = EventManager(self.hostname)
+        self.main_interface = None
 
         self.pingid = 0
 
@@ -56,23 +57,43 @@ class NetworkDevice():
         self.phy_interfaces[interface_name] = intf
         self.interfaces[interface_name] = intf
 
+        if self.main_interface is None:
+            self.main_interface = intf
+
         return self.phy_interfaces[interface_name]
 
     def add_ip_address(self, interface_name, address):
         intf = self.interfaces.get(interface_name)
         if intf is None:
-            raise f"{interface_name} is an unknown interface"
+            raise Exception(f"{interface_name} is an unknown interface")
 
         if type(address) == str:
             address = { 'ip': address}
 
+        logf = intf
         if intf.is_physical():
             logf = self.interfaces.get(interface_name + ".0")
             if logf is None:
+                # This will trigger LINK_STATE, but thats kinda lame?
                 logf = self.add_logical_interface(intf, interface_name + ".0", address)
+            else:
+                logf.addresses['ipv4'] = ipaddress.ip_interface(
+                    address['ip']
+                )
         else:
             intf.addresses['ipv4'] = ipaddress.ip_interface(
                     address['ip'])
+            logf = intf
+        
+        self.event_manager.observe(
+            Event(
+                EventType.INTERFACE_STATE,
+                logf, # TODO: self instead?
+                f"Added {address['ip']} as IPv4 adresss of {logf}",
+                logf,
+                "ADDRESS_CHANGE"
+            )
+        )
         
         return self
 
@@ -83,9 +104,10 @@ class NetworkDevice():
 
     def process_packet(self, source_interface, packet):
         payload = packet.payload
-        self.logger.info(f"Received {payload} ({payload.type})")
+
 
         if isinstance(payload, ICMPMessage) or isinstance(payload, ICMP):
+            self.logger.info(f"Received {payload} ({payload.type})")
             if payload.type == ICMPType.EchoRequest.value:
                 packet = IP(
                     src = packet.dst,
@@ -146,7 +168,7 @@ class NetworkDevice():
             'source_ip': source_ip,
         }
 
-        print(f"PING {ip_address}")
+        GlobalQueueManager.enqueue(0, print, (f"PING {ip_address}",))
 
         def ping_handler(evt):
             # scapy
@@ -162,6 +184,7 @@ class NetworkDevice():
                   evt.object.pdu.payload[2]['id'] == state['lastsent']):
                 print(f"\t{pdu} from {evt.object.src}")
                 state['lost'] = False
+            check_and_send()
 
         def check_and_send():
             now = self.event_manager.now()
@@ -193,7 +216,7 @@ class NetworkDevice():
                 raise Exception(
                     f"{self.hostname}: Unable to identify a source_ip to ping {ip_address} from {source_interface}")
 
-            self.pingid = pingid + 1
+            self.pingid = self.pingid + 1
             pingpayload = {
                 'id': self.pingid,
                 'time': GlobalQueueManager.now()
@@ -205,8 +228,8 @@ class NetworkDevice():
             #    ICMPMessage(ICMPType.EchoRequest, payload=pingpayload)
             #)
             packet = IP(
-                src = source_ip,
-                dst = ip_address
+                src = str(source_ip),
+                dst = str(ip_address)
             ) / ICMP (
                 type=ICMPType.EchoRequest
             ) / json.dumps(pingpayload)
@@ -214,7 +237,7 @@ class NetworkDevice():
             state['lost'] = True
             state['sent_time'] = self.event_manager.now()
             state['remaining'] = state['remaining'] - 1
-            self.scapy_send_ip(packet, source_interface=source_interface)
+            self.send_ip(packet, source_interface=source_interface)
             GlobalQueueManager.enqueue(timeout, check_and_send)
 
         state['handler'] = ping_handler
