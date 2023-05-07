@@ -1,6 +1,6 @@
 from routersim.observers import EventType
 from plantuml import Sequence, ObjectDiagram, ComponentDiagram
-
+from scapy.layers.l2 import Ether
 
 def topology_diagram(title, topo_data, events=None):
     diagram = ObjectDiagram(title)
@@ -181,10 +181,12 @@ def frame_sequence_add_event(sequence, src_name, evt, start_time=0,l3=True):
 
     if evt.event_type == EventType.PACKET_SEND:
 
-        if evt.object.type.name == 'CLNS':
+        if not isinstance(evt.object, Ether):
             return
+#        if evt.object.type.name == 'CLNS':
+#            return
 
-        notefn = getattr(evt.object.pdu, "seq_note", None)
+        notefn = getattr(evt.object.payload, "seq_note", None)
         if notefn is not None:
             note = notefn()
         else:

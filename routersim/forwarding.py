@@ -1,9 +1,10 @@
 
 from routersim.interface import LogicalInterface
 from .messaging import FrameType
-from .messaging import IPPacket, IPProtocol, ICMPMessage, ICMPType, UnreachableType
+from .messaging import ICMPType, UnreachableType
 from .mpls import MPLSPacket, PopStackOperation
 from .observers import Event, EventType
+from scapy.layers.inet import IP,ICMP,icmptypes
 from copy import copy
 import ipaddress
 
@@ -92,7 +93,7 @@ class PacketForwardingEngine():
 
             # should be an IPPacket
             potential_next_hops = self.forwarding.lookup_ip(
-                pdu.dest_ip
+                pdu.dst
             )
             if potential_next_hops is not None:
                 pdu.ttl -= 1
@@ -118,7 +119,7 @@ class PacketForwardingEngine():
                         if dest_interface is None:
                             self.logger.debug(f"Using {potential_next_hops[0].interface} for {pdu}")
                             dest_interface = potential_next_hops[0].interface
-                        self.logger.debug(f"Using {dest_interface} for {pdu}")
+                        self.logger.debug(f"Using {dest_interface} for {pdu} (potential NH: {potential_next_hops[0]}")
                         self.send_encapsulated(
                             potential_next_hops[0].next_hop_ip,
                             FrameType.IPV4,
@@ -132,20 +133,18 @@ class PacketForwardingEngine():
                         self.router.process_packet(source_interface, pdu)
                     elif hop_action.action == 'REJECT' and source_interface is not None:
                         #print(f"Sending reject from {source_interface.name}:{source_interface.address().ip} to {pdu.source_ip}")
-                        packet = IPPacket(
-                            pdu.source_ip,
-                            source_interface.address().ip,
-                            IPProtocol.ICMP,
-                            ICMPMessage(
-                                ICMPType.DestinationUnreachable,
-                                code=UnreachableType.NetworkUnreachable,
-                                payload=(
-                                    pdu.dest_ip,
-                                    pdu.source_ip,
-                                    pdu.pdu.payload  # IRL its first 8 bytes
+                        
+                        packet = IP(
+                            dst=pdu.src,
+                            src=source_interface.address().ip
+                        ) / ICMP(
+                            type = ICMPType.DestinationUnreachable,
+                            code=UnreachableType.NetworkUnreachable
+                        ) / (
+                                    pdu.dst,
+                                    pdu.src,
+                                    pdu.payload.payload  # IRL its first 8 bytes
                                 )
-                            )
-                        )
                         source_interface.send_ip(packet)
                     else:
                         self.logger.info(f"**** Have action {hop_action.action}")
@@ -156,6 +155,7 @@ class PacketForwardingEngine():
 
         pdu = copy(frame.pdu)
         if frame.type == FrameType.IPV4:
+            self.logger.info("Calling process_ip")
             process_ip(pdu, dest_interface)
             # This means we're supposed to look at it
         # special case of control plane...
@@ -177,7 +177,7 @@ class PacketForwardingEngine():
             except:
                 if pdu.label_stack[0] == '3':
                     newpdu = PopStackOperation().apply(pdu, self.router, event_manager=self.router.event_manager)
-                    if isinstance(newpdu, IPPacket):
+                    if isinstance(newpdu, IP):
                         process_ip(newpdu)
                         return
 
@@ -191,7 +191,7 @@ class PacketForwardingEngine():
                 if isinstance(newpdu, MPLSPacket):
                     fibentry.interface.parent.send(
                         FrameType.MPLSU, newpdu, logical=None)
-                elif isinstance(newpdu, IPPacket):
+                elif isinstance(newpdu, IP):
                     fibentry.interface.send_ip(newpdu)
                 else:
                     print(f"Unknown de-encapsulated packet type!")
@@ -204,7 +204,7 @@ class PacketForwardingEngine():
                           packet,
                           interface: LogicalInterface):
         if next_hop is None:
-            dest_ip = packet.dest_ip
+            dest_ip = packet.dst
             dest_ip_as_net = ipaddress.ip_network(f"{dest_ip}/32")
             if interface.address().network.overlaps(dest_ip_as_net):
                 next_hop = dest_ip

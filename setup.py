@@ -12,4 +12,5 @@ setup(name='routersim',
         'plantuml',
         'simhelpers',
       ],
+      install_requires=['scapy']
       )

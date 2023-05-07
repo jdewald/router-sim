@@ -1,6 +1,7 @@
 from ..observers import GlobalQueueManager, Event, EventType
 from ..interface import LogicalInterface, PhysicalInterface
-from ..messaging import BROADCAST_MAC, Frame, MACAddress
+from ..messaging import BROADCAST_MAC, MACAddress
+from scapy.layers.l2 import Ether
 
 from binascii import hexlify
 
@@ -97,14 +98,14 @@ class SwitchingEngine():
 
     # A frame always comes over a PhysicalInterface, and then may get
     # interpreted as a LogicalInterface depending on data in the frame
-    def process_frame(self, frame: Frame, source_interface: PhysicalInterface):
+    def process_frame(self, frame: Ether, source_interface: PhysicalInterface):
         self.logger.info("processing frame")
         # TODO: This is where we would look at the encapsulation to work
         # out where this is really intended
 
         out_interface = None
-        if frame.dest != BROADCAST_MAC:
-            out_interface = self.bridging.lookup_mac(frame.dest)
+        if frame.dst != BROADCAST_MAC:
+            out_interface = self.bridging.lookup_mac(frame.dst)
 
         # Right now still assuming single physical interface
         for logical in source_interface.interfaces.values():
@@ -117,7 +118,7 @@ class SwitchingEngine():
             # This can mean either that we haven't learned it, or its one of our own
             found = False
             for logical in source_interface.interfaces.values():
-                if frame.dest == logical.hw_address:
+                if frame.dst == logical.hw_address:
                     self.switch.process_frame(frame, logical)
                     found = True
 
@@ -127,10 +128,10 @@ class SwitchingEngine():
                                         )
 
         else:
-            self.logger.info(f"Successfully found entry for {frame.dest}")
+            self.logger.info(f"Successfully found entry for {frame.dst}")
             out_interface.send_frame(frame)
 
-    def broadcast_frame(self, frame: Frame, source_interface: PhysicalInterface):
+    def broadcast_frame(self, frame: Ether, source_interface: PhysicalInterface):
         self.logger.info(f"Broadcasting {frame}")
         for interface in self.interfaces:
             if interface != source_interface.name:

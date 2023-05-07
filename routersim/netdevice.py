@@ -1,11 +1,15 @@
 
 from .interface import PhysicalInterface
-from .messaging import ICMPMessage, ICMPType, IPPacket, IPProtocol, MACAddress
+from .messaging import ICMPMessage, ICMPType, IPProtocol, MACAddress
+
 from .observers import Event, EventManager, EventType, GlobalQueueManager
 from .junos import parser as junos
 import ipaddress
 import logging
 import random
+import json
+
+from scapy.layers.inet import IP,ICMP
 
 
 class NetworkDevice():
@@ -16,6 +20,7 @@ class NetworkDevice():
         self.logger = logging.getLogger(hostname)
         self.phy_interfaces = dict()
         self.event_manager = EventManager(self.hostname)
+        self.main_interface = None
 
         self.pingid = 0
 
@@ -52,23 +57,43 @@ class NetworkDevice():
         self.phy_interfaces[interface_name] = intf
         self.interfaces[interface_name] = intf
 
+        if self.main_interface is None:
+            self.main_interface = intf
+
         return self.phy_interfaces[interface_name]
 
     def add_ip_address(self, interface_name, address):
         intf = self.interfaces.get(interface_name)
         if intf is None:
-            raise f"{interface_name} is an unknown interface"
+            raise Exception(f"{interface_name} is an unknown interface")
 
         if type(address) == str:
             address = { 'ip': address}
 
+        logf = intf
         if intf.is_physical():
             logf = self.interfaces.get(interface_name + ".0")
             if logf is None:
+                # This will trigger LINK_STATE, but thats kinda lame?
                 logf = self.add_logical_interface(intf, interface_name + ".0", address)
+            else:
+                logf.addresses['ipv4'] = ipaddress.ip_interface(
+                    address['ip']
+                )
         else:
             intf.addresses['ipv4'] = ipaddress.ip_interface(
                     address['ip'])
+            logf = intf
+        
+        self.event_manager.observe(
+            Event(
+                EventType.INTERFACE_STATE,
+                logf, # TODO: self instead?
+                f"Added {address['ip']} as IPv4 adresss of {logf}",
+                logf,
+                "ADDRESS_CHANGE"
+            )
+        )
         
         return self
 
@@ -78,31 +103,42 @@ class NetworkDevice():
         return intf
 
     def process_packet(self, source_interface, packet):
-        self.logger.info(f"Received {packet.pdu}")
+        payload = packet.payload
 
-        if isinstance(packet.pdu, ICMPMessage):
-            if packet.pdu.type == ICMPType.EchoRequest:
-                packet = IPPacket(
-                    packet.source_ip,
-                    packet.dest_ip,
-                    IPProtocol.ICMP,
-                    ICMPMessage(
-                        ICMPType.EchoReply,
-                        payload=packet.pdu.payload
-                    )
-                )
+
+        if isinstance(payload, ICMPMessage) or isinstance(payload, ICMP):
+            self.logger.info(f"Received {payload} ({payload.type})")
+            if payload.type == ICMPType.EchoRequest.value:
+                packet = IP(
+                    src = packet.dst,
+                    dst = packet.src    
+                ) / ICMP (
+                    type = ICMPType.EchoReply
+                ) / payload.payload
+
+                #packet = IPPacket(
+                #    packet.source_ip,
+                #    packet.dest_ip,
+                #    IPProtocol.ICMP,
+                #    ICMPMessge(
+                #        ICMPType.EchoReply,
+                #        payload=packet.pdu.payload
+                #    )
+                #)
                 # In real life, I'm not sure we would do this
                 # but would look it up?
                 self.send_ip(packet)
-            elif packet.pdu.type == ICMPType.EchoReply:
+                return True
+            elif payload.type == ICMPType.EchoReply.value:
                 self.event_manager.observe(Event(
                     EventType.ICMP,
                     self,
-                    msg=f"Received Echo Reply {packet.pdu.payload}",
+                    msg=f"Received Echo Reply {payload.payload}",
                     object=packet,
-                    sub_type=packet.pdu.type
+                    sub_type=payload.type
                 ))
-            elif packet.pdu.type == ICMPType.DestinationUnreachable:
+                return True
+            elif payload.type == ICMPType.DestinationUnreachabl.valuee:
                 self.event_manager.observe(Event(
                     EventType.ICMP,
                     self,
@@ -110,6 +146,8 @@ class NetworkDevice():
                     object=packet,
                     sub_type=packet.pdu.type
                 ))
+                return True
+        return False
 
     def ping(self, ip_address, source_interface=None,
              source_ip=None, count=5, timeout=1000):
@@ -130,25 +168,30 @@ class NetworkDevice():
             'source_ip': source_ip,
         }
 
-        print(f"PING {ip_address}")
+        GlobalQueueManager.enqueue(0, print, (f"PING {ip_address}",))
 
         def ping_handler(evt):
-            if (evt.object.pdu.type == ICMPType.EchoReply and
-                evt.object.pdu.payload['id'] == state['lastsent']):
+            # scapy
+            pdu = evt.object.payload
+            pingpayload = json.loads(pdu.payload.load)
+            if (pdu.type == ICMPType.EchoReply.value and pingpayload['id'] == state['lastsent']):
                 delta = GlobalQueueManager.now(
-                ) - evt.object.pdu.payload['time']
+                ) - pingpayload['time']
                 print(
-                    f"\tReceived reply from {evt.object.source_ip} - {delta} ms")
+                    f"\tReceived reply from {evt.object.src} - {delta} ms")
                 state['lost'] = False
-            elif (evt.object.pdu.type == ICMPType.DestinationUnreachable and
+            elif (pdu.type == ICMPType.DestinationUnreachable.value and
                   evt.object.pdu.payload[2]['id'] == state['lastsent']):
-                print(f"\t{evt.object.pdu} from {evt.object.source_ip}")
+                print(f"\t{pdu} from {evt.object.src}")
                 state['lost'] = False
+            check_and_send()
 
         def check_and_send():
+            now = self.event_manager.now()
             if state['lost']:
-                print(f"\t!! Lost after {timeout}ms")
+                print(f"\t!! Lost after {now - state['sent_time']}ms")
             if state['remaining'] > 0:
+                state['sent_time'] = now
                 send_packet(state['dest_ip'],
                             state['source_interface'], state['source_ip'])
             else:
@@ -173,19 +216,26 @@ class NetworkDevice():
                 raise Exception(
                     f"{self.hostname}: Unable to identify a source_ip to ping {ip_address} from {source_interface}")
 
-            self.pingid = pingid + 1
+            self.pingid = self.pingid + 1
             pingpayload = {
                 'id': self.pingid,
                 'time': GlobalQueueManager.now()
             }
-            packet = IPPacket(
-                ip_address,
-                source_ip,
-                IPProtocol.ICMP,
-                ICMPMessage(ICMPType.EchoRequest, payload=pingpayload)
-            )
+            #packet = IPPacket(
+            #    ip_address,
+            #    source_ip,
+            #    IPProtocol.ICMP,
+            #    ICMPMessage(ICMPType.EchoRequest, payload=pingpayload)
+            #)
+            packet = IP(
+                src = str(source_ip),
+                dst = str(ip_address)
+            ) / ICMP (
+                type=ICMPType.EchoRequest
+            ) / json.dumps(pingpayload)
             state['lastsent'] = pingpayload['id']
             state['lost'] = True
+            state['sent_time'] = self.event_manager.now()
             state['remaining'] = state['remaining'] - 1
             self.send_ip(packet, source_interface=source_interface)
             GlobalQueueManager.enqueue(timeout, check_and_send)

@@ -138,22 +138,30 @@ class Topology():
         return topo
 
     def add_server(self, name: str,
-                    interfaces=None, cluster_name: str = 'default') -> Server:
+                    extra_interfaces=None, cluster_name: str = 'default',
+                    interface_addr: str = None) -> Server:
 
         if cluster_name not in self.clusters:
             self.clusters[cluster_name] = {}
 
         switch = Server(name)
 
-        if interfaces is not None:
-            for ifacename in interfaces:
+        if interface_addr is not None:
+            switch.add_ip_address(switch.main_interface.name, interface_addr)
+
+        # For now, you can only set the first addrss
+        if extra_interfaces is not None:
+            for ifacename in extra_interfaces:
                 switch.add_physical_interface(ifacename)
+
 
         self.clusters[cluster_name][name] = switch
 
         self.logger.info(f"Added Server {name}")
         switch.event_manager.listen('*', self.collector.observer(name))
     #    self._routers.append(switch)
+
+
 
         return switch
 

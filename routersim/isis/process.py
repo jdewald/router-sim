@@ -7,6 +7,7 @@ import random
 import sys
 import logging
 import pprint
+import ipaddress
 from copy import deepcopy
 
 # Intermediate-System to Intermediate-System
@@ -45,6 +46,8 @@ class Neighbor:
         self.name = '<Unknown>'
         self.level = 1
         self.metric = 10
+        # how do we actually reach it
+        self.iface_address = None
 
     def __str__(self):
         return f"{self.system_id}({self.name})"
@@ -383,8 +386,8 @@ In addition to the periodic generation of LSPs, an Intermediate system shall gen
         for ip in ip_tlvs:
             # just assuming single one for now
             neighbor.address = ip.address
-
-        adj_tlvs = [tlv for tlv in pdu.tlvs if isinstance(
+        
+            adj_tlvs = [tlv for tlv in pdu.tlvs if isinstance(
             tlv, P2PAdjacencyTLV)]
         for tlv in adj_tlvs:
             if tlv.system_id == self.system_id:
@@ -440,6 +443,20 @@ In addition to the periodic generation of LSPs, an Intermediate system shall gen
                 f"Received LSP on {recv_interface}, but do not have UP neighbor, ignoring")
             return
         lsp = self.database.get(pdu.lsp_id)
+
+        neigh = self.neighbors.get(pdu.source_address)
+        if neigh is not None:
+            ip_tlvs = [tlv for tlv in pdu.tlvs if isinstance(tlv, ExtendedISReachabilityTLV)]
+            for ip in ip_tlvs:
+                # Todo what if it came from the "other side" ?
+                network = recv_interface.address('ipv4').network
+                if network.supernet_of(ipaddress.ip_network(ip.local_ip)):
+                    # just assuming single one for now
+                    self.logger.debug(f"Neighbor address is {ip.local_ip}")
+                    neigh.iface_address = ip.local_ip
+        else:
+            self.logger.info(f"COuldn't find neighbor for {pdu.source_address}")
+
         if lsp is None or lsp.seq_no < pdu.seq_no:
             lsp = LinkStatePacketWrapper(deepcopy(pdu))
 #            lsp = LinkStatePacket(pdu.lsp_id, deepcopy(pdu), seq_no=pdu.seq_no)
@@ -667,20 +684,25 @@ In addition to the periodic generation of LSPs, an Intermediate system shall gen
                 # Don't think we need to put ourself in the routes
                 # as it's implied that it'll be in a direct route
                 continue
-            else:
-                next_hop = self.address_paths[address][0]
-                if next_hop not in self.neighbors:
-                    self.logger.error(
-                        f"{self.hostname} Invalid state: {next_hop} is not one of our neighbors")
-                    continue
-                next_hop_iface = self.neighbors[next_hop].interface_name
-                next_hop_name = self.database[next_hop].hostname
-                next_hop_addr = self.neighbors[next_hop].address
+        
+            next_hop = self.address_paths[address][0]
+            if next_hop not in self.neighbors:
+                self.logger.error(
+                    f"{self.hostname} Invalid state: {next_hop} is not one of our neighbors")
+                continue
+            next_hop_iface = self.neighbors[next_hop].interface_name
+            next_hop_name = self.database[next_hop].hostname
+            next_hop_addr = self.neighbors[next_hop].address
+            true_nh = self.neighbors[next_hop].iface_address
+
             metric = self.address_distances[address]
-            routes.append(
-                Route(
-                    address, "ISIS", self.interfaces[next_hop_iface]['interface'], next_hop_addr, RouteType.ISIS.value)
+            # we used to put next_hop_addr her
+            route = Route(
+                    address, "ISIS", self.interfaces[next_hop_iface]['interface'], true_nh, RouteType.ISIS.value
             )
+            # TODO: Should we install using recursive?
+
+            routes.append(route)
 
         self.routing.set_routes(routes, 'isis', src=self)
 

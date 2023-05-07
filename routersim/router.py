@@ -5,16 +5,16 @@ from .isis.process import IsisProcess
 from .routing import RoutingTables, Route, RouteType
 from .observers import EventManager, EventType, LoggingObserver, Event
 from .observers import GlobalQueueManager
-from .messaging import FrameType, IPPacket, IPProtocol, ICMPMessage, ICMPType, Frame, MACAddress, RSVPMessage
+from .messaging import FrameType, MACAddress, RSVPMessage
 from .messaging import BROADCAST_MAC
 from .forwarding import PacketForwardingEngine, ForwardingTable
 from .interface import ConnectionState, LogicalInterface
-from .netdevice import NetworkDevice
-from .arp import ArpHandler, ArpPacket
+from .arp import ArpHandler
 import ipaddress
 import logging
 from functools import partial
 from copy import copy
+from .server import Server
 
 
 # TODO: Refer to https://flylib.com/books/en/2.515.1.18/1/#:~:text=The%20Routing%20Engine%20and%20Packet,scale%20networks%20at%20high%20speeds.
@@ -110,13 +110,15 @@ class PacketListener:
         # Treat this as exception traffic
         # In "real life" the PFE would actuall see it first, so we're
         # currently treating this listener as part of the PFE
-        if frame.dest == BROADCAST_MAC or frame.dest == logint.hw_address:
+        if frame.dst == BROADCAST_MAC or frame.dst == logint.hw_address:
             self.router.process_frame(frame, logint)
         else:
             self.router.pfe.process_frame(frame, source_interface=logint)
 
 
-class Router(NetworkDevice):
+# A router is essentially a regular server (the control plane)
+# a badass set of network cards (the fowrarding plane/packet fowarding engine)
+class Router(Server):
 
     def __init__(self, hostname, loopback_address):
         super().__init__(hostname)
@@ -180,54 +182,17 @@ class Router(NetworkDevice):
     def show_isis_database(self):
         self.process['isis'].print_database()
 
-    def process_frame(self, frame: Frame, source_interface: LogicalInterface):
-        if frame.dest != BROADCAST_MAC and frame.dest != source_interface.hw_address:
-            return
-
-        if frame.type == FrameType.ARP:
-            self.arp.process(frame.pdu, source_interface)
-        elif frame.type == FrameType.IPV4:
-            self.process_packet(source_interface, frame.pdu)
-
     def process_arp(self, source_interface, pdu):
         self.arp.process(pdu, source_interface)
 
     def process_packet(self, source_interface, packet):
-        self.logger.info(f"Received {packet.pdu}")
+        self.logger.info(f"Received {packet}")
 
-        if isinstance(packet.pdu, ICMPMessage):
-            if packet.pdu.type == ICMPType.EchoRequest:
+        if super().process_packet(source_interface, packet):
+            return True
 
-                packet = IPPacket(
-                    packet.source_ip,
-                    packet.dest_ip,
-                    IPProtocol.ICMP,
-                    ICMPMessage(
-                        ICMPType.EchoReply,
-                        payload=packet.pdu.payload
-                    )
-                )
-                # In real life, I'm not sure we would do this
-                # but would look it up?
-                self.send_ip(packet)
-            elif packet.pdu.type == ICMPType.EchoReply:
-                self.event_manager.observe(Event(
-                    EventType.ICMP,
-                    self,
-                    msg=f"Received Echo Reply {packet.pdu.payload}",
-                    object=packet,
-                    sub_type=packet.pdu.type
-                ))
-            elif packet.pdu.type == ICMPType.DestinationUnreachable:
-                self.event_manager.observe(Event(
-                    EventType.ICMP,
-                    self,
-                    msg=f"Received Unreachable ({packet.pdu.code})",
-                    object=packet,
-                    sub_type=packet.pdu.type
-                ))
-        elif isinstance(packet.pdu, RSVPMessage):
-            self.process['rsvp'].process_packet(source_interface, packet)
+        if isinstance(packet.pdu, RSVPMessage):
+            return self.process['rsvp'].process_packet(source_interface, packet)
 
     def static_route(self, dest_prefix, gw_int):
         if isinstance(dest_prefix, str):
@@ -254,31 +219,13 @@ class Router(NetworkDevice):
                    dest_address: MACAddress,
                    frame_type: FrameType,
                    pdu,
-                   source_override: None):
+                   source_override=None):
 
         # Assumption on this level is that we are over a shared medium
         # such that we can just dump this on the wire. 
-        interface.send_frame(dest_address, frame_type, pdu)
+        interface.send(dest_address, frame_type, pdu)
 
  
-    def send_ip(self, packet, source_interface=None):
-
-        if source_interface is None:
-            route = self.routing.lookup_ip(packet.dest_ip)
-
-            if route is not None:
-                source_interface = route.interface
-
-        # Once we do layer2, we might just ship the IPV4 to it?
-        GlobalQueueManager.enqueue(
-            0,
-            self.pfe.accept_frame,
-            arguments=(Frame("000", "000", FrameType.IPV4, packet),
-                       source_interface)
-        )
-
-
-
     def create_lsp(self, lsp_name, dest_ip, link_protection=False):
         """
         Kick off the logic to issue RSVP Path messages

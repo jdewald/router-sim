@@ -2,46 +2,67 @@ from routersim.interface import LogicalInterface
 from .netdevice import NetworkDevice
 from .routing import RoutingTables, Route, RouteType
 from .observers import LoggingObserver, EventType
-from .messaging import BROADCAST_MAC, Frame, FrameType
+from .messaging import BROADCAST_MAC, FrameType
 from .arp import ArpHandler
 import ipaddress
+from .scapy import RouterSimRoute
+from scapy.sendrecv import send as scapy_l3_send
+from scapy.config import conf as scapy_conf
+from scapy.layers.l2 import Ether
+from scapy.layers.inet import UDP,TCP
+from dataclasses import dataclass
+from .dhcp import DHCPClient
 
+V4_ADDR_UNSPECIFIED = "0.0.0.0"
+@dataclass(frozen=True)
+class SocketDef:
+    proto: str
+    local: str
+    local_port: int
+    remote: str = ""
+    remote_port: int = -1
 
 class RouteTableUpdater:
     def __init__(self, router):
         self.router = router
 
+    def add_connected_route(self, iface: LogicalInterface):
+        self.router.routing.add_route(
+            Route(
+                iface.addresses['ipv4'].network,
+                RouteType.CONNECTED,
+                iface,
+                None,
+                metric=1
+            ),
+            'direct',
+            src=iface.parent.parent
+        )
+        self.router.routing.add_route(
+            Route(
+                ipaddress.ip_network(
+                    (iface.addresses['ipv4'].ip, 32)),
+                RouteType.LOCAL,
+                iface,
+                None,
+                metric=1
+            ),
+            'direct',
+            src=iface.parent.parent
+        )
+
+
     def observe(self, evt):
-        if evt.event_type == EventType.LINK_STATE:
+        if evt.event_type == EventType.LINK_STATE or \
+            evt.event_type == EventType.INTERFACE_STATE:
             source = evt.source
 
             if source.is_up():
                 # Need to add connected routes
 
-                if not source.is_physical():
-                    self.router.routing.add_route(
-                        Route(
-                            source.addresses['ipv4'].network,
-                            RouteType.CONNECTED,
-                            source,
-                            None,
-                            metric=1
-                        ),
-                        'direct',
-                        src=source.parent.parent
-                    )
-                    self.router.routing.add_route(
-                        Route(
-                            ipaddress.ip_network(
-                                (source.addresses['ipv4'].ip, 32)),
-                            RouteType.LOCAL,
-                            source,
-                            None,
-                            metric=1
-                        ),
-                        'direct',
-                        src=source.parent.parent
-                    )
+                if not source.is_physical() and 'ipv4' in source.addresses:
+                    self.add_connected_route(source)
+
             else:
                 # BLEH.
                 if not source.is_physical():
@@ -69,6 +90,7 @@ class RouteTableUpdater:
                         src=source.parent.parent
                     )
 
+
 class PacketListener:
     def __init__(self, server):
         self.server = server
@@ -87,11 +109,8 @@ class PacketListener:
         # Still need to work out exactly how we distinguish these
         # assume it was meant for the first interfrace for now,
         # e.g. no vlan support
-        logint = None
-        for ifacename in physint.interfaces:
-            logint = physint.interfaces[ifacename]
-            #self.interfaces[ifacename].receive(frame)
-            break
+        logint = physint.logical()
+
 
         self.server.process_frame(frame, source_interface=logint)
 
@@ -109,6 +128,15 @@ class Server(NetworkDevice):
             EventType.PACKET_RECV, PacketListener(self).observe)
         self.event_manager.listen(
             EventType.LINK_STATE, RouteTableUpdater(self).observe)
+        self.event_manager.listen(
+            EventType.INTERFACE_STATE, RouteTableUpdater(self).observe
+        )
+
+        # TODO: Put this on PacketListener?
+        self.sockets = {
+            "UDP": {},
+            "TCP": {}
+        }
 
     def static_route(self, dest_prefix, gw_ip, gw_int):
         if isinstance(dest_prefix, str):
@@ -143,11 +171,16 @@ class Server(NetworkDevice):
         # such that we can just dump this on the wire. 
         interface.send(dest_address, frame_type, pdu)
 
+    def scapy_send_ip(self, packet, source_interface=None):
+        scapy_conf.route = RouterSimRoute(self.routing)
+        scapy_l3_send(packet)
+
     # In order to send a Layer 3 (IP) packet that is on the same layer 3 network as
     # our packet, we need to to know it's Layer 2 (Ethernet) address. This
     def send_ip(self, packet, source_interface=None):
   
-        route = self.routing.lookup_ip(packet.dest_ip)
+  #      route = self.routing.lookup_ip(packet.dest_ip)
+        route = self.routing.lookup_ip(packet.dst)
         if route is None:
             # TODO: NoRouteException
             raise Exception()
@@ -161,27 +194,73 @@ class Server(NetworkDevice):
         # local network to go over Layer 2, or if it should be sent off
         # to to the default route
         lookup_addr = route.next_hop_ip
-        dest_ip = packet.dest_ip
+#        dest_ip = packet.dest_ip
+        dest_ip = packet.dst
         dest_ip_as_net = ipaddress.ip_network(f"{dest_ip}/32")
         if source_interface.address().network.overlaps(dest_ip_as_net):
             lookup_addr = dest_ip
 
         mac_address = self.arp.cache.get(lookup_addr)
-
+  
         if mac_address is None:
-            self.arp.enqueue(packet, source_interface)
-            self.arp.request(dest_ip, source_interface)
+            self.arp.enqueue(lookup_addr, packet, source_interface)
+            self.arp.request(lookup_addr, source_interface)
         else:
             self.send_frame(source_interface,
                             mac_address,
                             FrameType.IPV4,
                             packet)
 
-    def process_frame(self, frame: Frame, source_interface: LogicalInterface):
-        if frame.dest != BROADCAST_MAC and frame.dest != source_interface.hw_address:
+    def process_frame(self, frame: Ether, source_interface: LogicalInterface):
+        if frame.dst != BROADCAST_MAC and frame.dst != source_interface.hw_address:
             return
 
-        if frame.type == FrameType.ARP:
-            self.arp.process(frame.pdu, source_interface)
-        elif frame.type == FrameType.IPV4:
-            self.process_packet(source_interface, frame.pdu)
+        if int(frame.type) == FrameType.ARP:
+            self.arp.process(frame.payload, source_interface)
+        elif int(frame.type) == FrameType.IPV4:
+            self.process_packet(source_interface, frame.payload)
+
+    def process_packet(self, source_interface, packet) -> bool:
+        if super().process_packet(source_interface, packet):
+            return True
+        
+
+        payload = packet.payload
+        if isinstance(payload, UDP):
+
+            udp_sockets = self.sockets["UDP"]
+
+            # TODO: Better search
+            listener = udp_sockets.get(SocketDef(
+                "UDP", 
+                packet.dst,
+                payload.dport))
+            
+            if listener is None:
+                listener = udp_sockets.get(
+                    SocketDef(
+                        "UDP",
+                        V4_ADDR_UNSPECIFIED,
+                        payload.dport
+                    )
+                )
+
+            if listener is None:
+                return False
+
+            listener(source_interface, packet)
+
+            return True
+
+
+    def listen_udp(self, port: int, listener):
+
+        listensock = SocketDef("UDP", V4_ADDR_UNSPECIFIED, port)
+
+        self.sockets["UDP"][listensock] = listener
+
+        
+    def dhcp_client_start(self):
+        self.dhcpclient = DHCPClient(self)
+
+        self.dhcpclient.discover(self.main_interface)
